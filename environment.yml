@@ -1,0 +1,53 @@
+# Conda environment for running the AI-Art Detection notebook, scripts, tests,
+# and LaTeX report generation.
+#
+# Create it with:
+#   conda env create -f environment.yml
+#   conda activate ai-art-detection
+#   python -m ipykernel install --user --name ai-art-detection \
+#     --display-name "Python (ai-art-detection)"
+#
+# The PyTorch stack below matches the CUDA 11.8 environment used to execute the
+# notebook on the RTX 4090. For a CPU-only machine, remove `pytorch-cuda=11.8`
+# and install the CPU PyTorch packages appropriate for that system.
+name: ai-art-detection
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.12
+  - pip
+  - setuptools>=68
+  - wheel
+
+  # Core numerical/image stack
+  - numpy>=1.26
+  - pandas>=2.1
+  - pillow>=10.0
+  - scikit-learn>=1.3
+  - matplotlib>=3.8
+
+  # GPU-enabled PyTorch stack
+  - pytorch=2.3.1
+  - torchvision=0.18.1
+  - pytorch-cuda=11.8
+
+  # Notebook execution and development tools
+  - jupyterlab>=4
+  - notebook>=7
+  - ipykernel>=6
+  - nbclient>=0.10
+  - nbconvert>=7
+  - nbformat>=5.9
+  - pytest>=8
+  - ruff>=0.5
+
+  # Report compilation
+  - tectonic
+
+  # Packages not consistently available from the selected conda channels,
+  # plus the local project in editable mode.
+  - pip:
+      - kagglehub>=0.3.12
+      - -e .
