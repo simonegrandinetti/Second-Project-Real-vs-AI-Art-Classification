@@ -1,3 +1,5 @@
+"""Experiment definitions and the one-experiment training/evaluation flow."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,6 +17,8 @@ from .training import fit, save_result
 
 @dataclass(frozen=True, slots=True)
 class Experiment:
+    """One row in the fixed experiment matrix."""
+
     name: str
     model_name: str
     mode: str
@@ -44,6 +48,8 @@ def run_experiment(
     device: torch.device,
     pretrained: bool = True,
 ) -> tuple[nn.Module, dict]:
+    """Train/evaluate one experiment and write its standard artifacts."""
+    # 1) Build loaders.  Only the training loader receives augmentation.
     train_loader, val_loader, test_loader = build_loaders(
         train_frame,
         val_frame,
@@ -56,11 +62,16 @@ def run_experiment(
     model = build_model(
         experiment.model_name, experiment.mode, pretrained=pretrained
     ).to(device)
+
+    # 2) Fine-tuned models use the lower learning rate; frozen-head baselines
+    # use the head learning rate.
     learning_rate = (
         config.lr_finetune
         if experiment.mode in {"last_stage", "full"}
         else config.lr_head
     )
+
+    # 3) Fit with early stopping on validation F1 and save the best checkpoint.
     train_result = fit(
         model,
         train_loader,
@@ -80,6 +91,8 @@ def run_experiment(
         },
         threshold=config.threshold,
     )
+
+    # 4) Re-evaluate the restored best checkpoint on validation and test splits.
     criterion = nn.BCEWithLogitsLoss()
     val_metrics, val_predictions = evaluate(
         model, val_loader, criterion, device, threshold=config.threshold
@@ -87,6 +100,9 @@ def run_experiment(
     test_metrics, test_predictions = evaluate(
         model, test_loader, criterion, device, threshold=config.threshold
     )
+
+    # 5) Persist history, predictions, and subgroup tables for notebook/report
+    # use.  The report reads these files instead of hand-entered values.
     train_result.history.to_csv(
         config.output_dir / "metrics" / f"{experiment.name}_history.csv",
         index=False,

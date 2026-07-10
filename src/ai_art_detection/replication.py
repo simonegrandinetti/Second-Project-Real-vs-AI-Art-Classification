@@ -1,3 +1,5 @@
+"""Bootstrap utilities for the independent replication audit."""
+
 from __future__ import annotations
 
 import hashlib
@@ -29,10 +31,14 @@ def stratified_bootstrap_scores(
     """Bootstrap a binary metric while preserving source/style composition."""
     if n_resamples <= 0:
         raise ValueError("n_resamples must be positive.")
+
     required = {"label", "logit", *strata}
     missing = required - set(predictions.columns)
     if missing:
         raise ValueError(f"Predictions are missing columns: {sorted(missing)}")
+
+    # Sampling happens within each source/style stratum so every bootstrap
+    # replicate keeps the same subgroup composition as the audit set.
     groups = [
         part.index.to_numpy()
         for _, part in predictions.groupby(list(strata), sort=True)
@@ -62,6 +68,7 @@ def percentile_interval(
     *,
     confidence: float = 0.95,
 ) -> tuple[float, float]:
+    """Return a central percentile confidence interval."""
     if not 0 < confidence < 1:
         raise ValueError("confidence must be between 0 and 1.")
     alpha = (1 - confidence) / 2
@@ -79,6 +86,8 @@ def f1_audit_intervals(
     threshold: float = 0.5,
 ) -> dict[str, float]:
     """Return replication F1 and independent-bootstrap gap intervals."""
+    # The three score arrays use different seeds because the train, original
+    # test, and replication sets are separate samples.
     train_scores = stratified_bootstrap_scores(
         train_predictions,
         n_resamples=n_resamples,

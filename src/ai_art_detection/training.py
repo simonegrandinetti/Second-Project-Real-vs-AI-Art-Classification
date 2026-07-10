@@ -1,3 +1,5 @@
+"""Training loop utilities for binary PyTorch classifiers."""
+
 from __future__ import annotations
 
 import copy
@@ -16,6 +18,8 @@ from .evaluation import binary_metrics, evaluate
 
 @dataclass(slots=True)
 class TrainResult:
+    """Result returned after fitting one model."""
+
     model: nn.Module
     history: pd.DataFrame
     best_epoch: int
@@ -32,6 +36,7 @@ def train_one_epoch(
     scaler: torch.cuda.amp.GradScaler | None = None,
     threshold: float = 0.5,
 ) -> dict[str, float]:
+    """Train for one epoch and return thresholded binary metrics."""
     model.train()
     loss_total = 0.0
     labels_all: list[float] = []
@@ -42,9 +47,13 @@ def train_one_epoch(
         images = batch["image"].to(device, non_blocking=True)
         labels = batch["label"].to(device, non_blocking=True)
         optimizer.zero_grad(set_to_none=True)
+
+        # CUDA runs use autocast + GradScaler for speed; CPU runs use the same
+        # code path with AMP disabled.
         with torch.autocast(device_type=device.type, enabled=use_amp):
             logits = model(images).flatten()
             loss = criterion(logits, labels)
+
         if scaler is not None and use_amp:
             scaler.scale(loss).backward()
             scaler.step(optimizer)
@@ -74,6 +83,7 @@ def fit(
     checkpoint_metadata: dict | None = None,
     threshold: float = 0.5,
 ) -> TrainResult:
+    """Fit a model with AdamW, LR scheduling, and validation-F1 early stopping."""
     model.to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(
@@ -94,6 +104,8 @@ def fit(
     started = time.monotonic()
 
     for epoch in range(1, epochs + 1):
+        # Train once, evaluate on validation, then let the scheduler react to
+        # validation F1.  Test data is deliberately absent from this loop.
         train_metrics = train_one_epoch(
             model, train_loader, optimizer, criterion, device, scaler, threshold
         )
@@ -116,6 +128,9 @@ def fit(
             f"val_f1={val_metrics['f1']:.4f}, "
             f"lr={optimizer.param_groups[0]['lr']:.2e}"
         )
+
+        # Store the best validation-F1 weights.  The final returned model is
+        # restored to this state even if later epochs overfit.
         if val_metrics["f1"] > best_val_f1:
             best_val_f1 = val_metrics["f1"]
             best_epoch = epoch
@@ -134,6 +149,7 @@ def fit(
                 )
         else:
             stale_epochs += 1
+
         if stale_epochs >= patience:
             break
 

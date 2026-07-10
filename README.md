@@ -10,15 +10,15 @@ The implementation includes:
 
 - MobileNetV2 baselines with and without augmentation;
 - frozen and partially fine-tuned ConvNeXt-Tiny;
-- a final-feature squeeze-and-excitation ablation;
+- a final-feature squeeze-and-excitation channel-attention variant;
 - accuracy, precision, recall, F1, ROC-AUC, confusion matrices, and ROC curves;
 - style metrics and class-appropriate source error rates;
-- contrast, JPEG, and common-resampling robustness tests;
+- photometric, blur/noise, JPEG, and common-resampling robustness tests;
 - Grad-CAM panels, a reproducibility manifest, an executed notebook workflow,
   and a LaTeX report.
 
-The SE model is a simplified paper-inspired ablation. It does not reproduce or
-claim the paper's multi-level AttentionConvNeXt architecture.
+The SE model is a controlled channel-attention insertion experiment. It does
+not reproduce or claim the paper's multi-level AttentionConvNeXt architecture.
 
 ## 1. Environment
 
@@ -99,6 +99,9 @@ validation-F1 early stopping, and a fixed 0.5 threshold. The best model is
 chosen by validation F1, never by test performance.
 If an interrupted run already contains complete per-experiment artifacts,
 repeat the command with `--resume`.
+Use the same `--resume` path to refresh post-training robustness results after
+changing robustness conditions; the checkpoints and primary predictions are
+reused, but the validation-selected model is reloaded for robustness.
 
 ## 4. Independent replication audit
 
@@ -131,6 +134,7 @@ compile the report:
 
 ```bash
 python scripts/make_latex_table.py
+python scripts/make_robustness_examples.py
 cd report
 tectonic report.tex
 ```
@@ -158,7 +162,7 @@ test.
 | E1 | MobileNetV2 | classifier | yes | augmentation effect |
 | E2 | ConvNeXt-Tiny | classifier | yes | backbone comparison |
 | E3 | ConvNeXt-Tiny | last stage + classifier | yes | fine-tuning effect |
-| E4 | ConvNeXt-Tiny + SE | last stage + SE + classifier | yes | attention ablation |
+| E4 | ConvNeXt-Tiny + SE | last stage + SE + classifier | yes | attention insertion |
 
 ## Repository map
 

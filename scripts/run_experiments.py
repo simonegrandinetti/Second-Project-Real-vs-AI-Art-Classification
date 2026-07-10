@@ -1,4 +1,17 @@
 #!/usr/bin/env python3
+"""Run the fixed AI-art detection experiment suite.
+
+The script mirrors the notebook workflow in a non-interactive form:
+
+1. scan and validate the dataset;
+2. create the deterministic train/validation/test splits;
+3. train or reuse the requested experiments;
+4. save metrics, plots, robustness checks, Grad-CAM panels, and a manifest.
+
+All model selection is based on validation F1.  Test and robustness results are
+reported only after the validation-selected checkpoint is fixed.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -25,6 +38,7 @@ from ai_art_detection.evaluation import (
     evaluate_robustness,
     plot_confusion,
     plot_roc,
+    robustness_plot_label,
     source_error_summary,
     style_metrics,
 )
@@ -110,6 +124,7 @@ def save_manifest(
 
 
 def main() -> None:
+    # 1) Collect run settings and make every output folder up front.
     args = parse_args()
     config = ProjectConfig(
         data_root=args.data_root,
@@ -125,6 +140,8 @@ def main() -> None:
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
+    # 2) Scan the raw Kaggle folder.  The validation call protects the protocol
+    # from silently changing if the dataset layout or counts are unexpected.
     scanned = scan_dataset(config.data_root)
     validate_dataset_inventory(scanned)
     print("\nScanned binary labels:")
@@ -140,6 +157,9 @@ def main() -> None:
     inventory.to_csv(
         config.output_dir / "tables" / "dataset_inventory.csv", index=False
     )
+
+    # 3) Build the fixed coursework splits and persist the exact image paths.
+    # The split files are later reused by report generation and replication.
     train, val, test = coursework_split(scanned, seed=config.seed)
     for name, frame in (("train", train), ("val", val), ("test", test)):
         frame.to_csv(config.output_dir / "tables" / f"{name}_split.csv", index=False)
@@ -152,6 +172,8 @@ def main() -> None:
         (train, val, test),
     )
 
+    # 4) Choose the requested experiments.  With no explicit selection, run the
+    # full E0--E4 matrix described in the README and report.
     requested = set(args.experiments or [])
     experiments = [
         experiment
@@ -164,6 +186,9 @@ def main() -> None:
     best_validation_f1 = -1.0
     for experiment in experiments:
         print(f"\nRunning {experiment.name}")
+
+        # These three files define a complete experiment run.  `--resume`
+        # reuses them only when all are present.
         result_path = (
             config.output_dir / "metrics" / f"{experiment.name}_result.json"
         )
@@ -195,6 +220,9 @@ def main() -> None:
                 pretrained=not args.no_pretrained,
             )
         rows.append(result)
+
+        # Save the same per-experiment diagnostic outputs for every model so
+        # comparisons are visible without reopening checkpoints.
         predictions = pd.read_csv(prediction_path)
         style_metrics(predictions).to_csv(
             config.output_dir / "tables" / f"{experiment.name}_style_metrics.csv",
@@ -212,6 +240,9 @@ def main() -> None:
             predictions,
             config.output_dir / "figures" / f"{experiment.name}_roc.png",
         )
+
+        # Keep only the validation-selected best model in memory.  Test F1 is
+        # never used to pick the model.
         if result["val_f1"] > best_validation_f1:
             if best_model is not None and device.type == "cuda":
                 del best_model
@@ -230,6 +261,7 @@ def main() -> None:
     print("\nResults (ranked by validation F1):")
     print(results.to_string(index=False))
 
+    # 5) Run robustness and Grad-CAM only for the validation-selected model.
     assert best_model is not None and best_experiment is not None
     robust = evaluate_robustness(
         best_model,
@@ -248,22 +280,10 @@ def main() -> None:
         index=False,
     )
     labels = [
-        (
-            "clean"
-            if condition == "clean"
-            else (
-                f"contrast {value:g}x"
-                if condition == "contrast"
-                else (
-                    f"JPEG Q{int(value)}"
-                    if condition == "jpeg"
-                    else f"resample {int(value)} px"
-                )
-            )
-        )
+        robustness_plot_label(condition, value)
         for condition, value in zip(robust["condition"], robust["value"])
     ]
-    figure, axis = plt.subplots(figsize=(8, 4))
+    figure, axis = plt.subplots(figsize=(11, 4.5))
     axis.plot(labels, robust["f1"], marker="o")
     axis.set(ylabel="F1", title="Robustness of validation-selected model")
     axis.tick_params(axis="x", rotation=45)

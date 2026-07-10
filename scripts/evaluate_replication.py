@@ -1,4 +1,14 @@
 #!/usr/bin/env python3
+"""Run the independent holdout overfitting audit.
+
+This command does not train or select models. It reloads the saved checkpoints,
+evaluates them on the clean training split and on a second official-test
+holdout, then writes an isolated replication result folder.
+
+The preprocessing is deliberately the standard 224x224 evaluation transform;
+the robustness resampling transform is not used here.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -59,6 +69,7 @@ def parse_args() -> argparse.Namespace:
 def read_original_splits(
     tables_dir: Path,
 ) -> dict[str, pd.DataFrame]:
+    """Load the original split CSVs and reject any path overlap."""
     splits = {
         name: pd.read_csv(tables_dir / f"{name}_split.csv")
         for name in ("train", "val", "test")
@@ -77,6 +88,7 @@ def read_original_splits(
 
 
 def main() -> None:
+    # 1) Read audit settings. Defaults match the report protocol.
     args = parse_args()
     config = ProjectConfig(
         data_root=args.data_root,
@@ -89,6 +101,8 @@ def main() -> None:
     print(f"Device: {device}")
     print(f"Preprocessing: {STANDARD_EVAL_TRANSFORM_ID}")
 
+    # 2) Keep every replication artifact under outputs/replication so the
+    # original experiment results remain untouched.
     original_tables = config.output_dir / "tables"
     original_metrics = config.output_dir / "metrics"
     replication_root = config.output_dir / "replication"
@@ -97,6 +111,8 @@ def main() -> None:
     replication_tables.mkdir(parents=True, exist_ok=True)
     replication_metrics.mkdir(parents=True, exist_ok=True)
 
+    # 3) Reconstruct the candidate pool and exclude every original train,
+    # validation, and test path before sampling the second holdout.
     scanned = scan_dataset(config.data_root)
     validate_dataset_inventory(scanned)
     splits = read_original_splits(original_tables)
@@ -112,6 +128,7 @@ def main() -> None:
     replication.to_csv(replication_path, index=False)
     print(f"Replication holdout: {len(replication)} images")
 
+    # 4) Select checkpoints to audit. With no explicit argument, audit E0--E4.
     requested = set(args.experiments or [])
     experiments = [
         experiment
@@ -128,6 +145,8 @@ def main() -> None:
         model = load_experiment_checkpoint(experiment, config, device)
         checkpoint_names.append(f"{experiment.name}_best.pt")
 
+        # Use the same clean, deterministic evaluation transform for every
+        # checkpoint. No augmentation or robustness resampling is mixed in.
         train_loader = build_standard_eval_loader(
             splits["train"],
             image_size=config.image_size,
@@ -155,6 +174,8 @@ def main() -> None:
             threshold=config.threshold,
         )
 
+        # The original-test predictions are read, not recomputed, so this audit
+        # compares the new holdout against the exact reported test outputs.
         original_predictions_path = (
             original_metrics / f"{experiment.name}_test_predictions.csv"
         )
@@ -170,12 +191,15 @@ def main() -> None:
             threshold=config.threshold,
         )
 
+        # All models must be evaluated on the identical replication path order.
+        # This protects the paired comparisons and bootstrap intervals.
         current_replication_paths = replication_predictions["image_path"].tolist()
         if replication_paths_reference is None:
             replication_paths_reference = current_replication_paths
         elif current_replication_paths != replication_paths_reference:
             raise RuntimeError("Models were not evaluated on identical replication paths.")
 
+        # Save per-model predictions and subgroup summaries for inspection.
         train_predictions.to_csv(
             replication_metrics
             / f"{experiment.name}_train_clean_predictions.csv",
@@ -234,6 +258,8 @@ def main() -> None:
         if device.type == "cuda":
             torch.cuda.empty_cache()
 
+    # 5) Write the combined audit table and the manifest that documents the
+    # seed, quotas, preprocessing identifier, split hashes, and overlap checks.
     results = pd.DataFrame(rows)
     results["replication_rank"] = (
         results["replication_f1"].rank(method="min", ascending=False).astype(int)

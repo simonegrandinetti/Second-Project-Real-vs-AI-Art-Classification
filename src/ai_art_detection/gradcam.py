@@ -1,3 +1,5 @@
+"""Grad-CAM utilities for qualitative model inspection."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -15,10 +17,15 @@ from .models import gradcam_target_layer
 
 
 class GradCAM:
+    """Small context-managed Grad-CAM engine for a selected target layer."""
+
     def __init__(self, model: nn.Module, target_layer: nn.Module):
         self.model = model
         self.activations: torch.Tensor | None = None
         self.gradients: torch.Tensor | None = None
+
+        # Hooks are registered once and removed by `close()` / context manager
+        # exit so notebook reruns do not accumulate stale hooks.
         self.forward_handle = target_layer.register_forward_hook(self._forward_hook)
         self.backward_handle = target_layer.register_full_backward_hook(
             self._backward_hook
@@ -31,6 +38,7 @@ class GradCAM:
         self.gradients = grad_output[0]
 
     def close(self) -> None:
+        """Remove registered hooks."""
         self.forward_handle.remove()
         self.backward_handle.remove()
 
@@ -46,17 +54,24 @@ class GradCAM:
         target_class: int,
         device: torch.device,
     ) -> tuple[np.ndarray, float]:
+        """Return a normalized CAM and fake probability for one image tensor."""
         self.model.eval()
         self.model.zero_grad(set_to_none=True)
         # Input gradients keep hooks active even when the backbone is frozen.
         batch = image.unsqueeze(0).to(device).requires_grad_(True)
         logit = self.model(batch).flatten()[0]
+
+        # Binary models emit one logit for the fake class.  For real-class
+        # examples we backpropagate the negative logit.
         score = logit if target_class == 1 else -logit
         score.backward()
         if self.activations is None or self.gradients is None:
             raise RuntimeError("Grad-CAM hooks did not receive tensors.")
         activations = self.activations[0]
         gradients = self.gradients[0]
+
+        # Standard Grad-CAM: average gradients over space, weight activations,
+        # clamp to positive evidence, then resize to input resolution.
         weights = gradients.mean(dim=(1, 2), keepdim=True)
         cam = torch.relu((weights * activations).sum(dim=0, keepdim=True))
         cam = functional.interpolate(
@@ -92,6 +107,9 @@ def save_gradcam_panels(
         )
     predictions["label"] = predictions["label"].astype(int)
     predictions["pred"] = predictions["pred"].astype(int)
+
+    # Three groups give a compact qualitative check: what the model uses for
+    # real successes, fake successes, and mistakes.
     groups = {
         "gradcam_correct_real": predictions[
             predictions["correct"] & (predictions["label"] == 0)
@@ -106,6 +124,7 @@ def save_gradcam_panels(
         for name, frame in groups.items():
             if frame.empty:
                 continue
+
             sample = frame.sample(
                 min(examples_per_group, len(frame)), random_state=seed
             )
@@ -115,6 +134,7 @@ def save_gradcam_panels(
             for row_axes, (_, row) in zip(axes, sample.iterrows()):
                 with Image.open(row["image_path"]) as source:
                     image = source.convert("RGB")
+
                 tensor = transform(image)
                 cam, probability = cam_engine(tensor, int(row["pred"]), device)
                 rendered = image.resize((image_size, image_size))

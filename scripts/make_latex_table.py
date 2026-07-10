@@ -1,4 +1,11 @@
 #!/usr/bin/env python3
+"""Generate report fragments from measured experiment outputs.
+
+The report should compile only from real CSV/figure outputs, not hand-entered
+numbers. This script reads the experiment tables, creates small LaTeX fragments,
+copies selected figures, and writes macros used by `report/report.tex`.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -6,6 +13,11 @@ import shutil
 from pathlib import Path
 
 import pandas as pd
+
+from ai_art_detection.evaluation import (
+    robustness_condition_label,
+    robustness_value_label,
+)
 
 
 def write_table(
@@ -36,6 +48,7 @@ def latex_escape(value: str) -> str:
 
 
 def main() -> None:
+    # 1) Read the locations of measured outputs and report fragments.
     parser = argparse.ArgumentParser(
         description="Generate all LaTeX fragments from measured experiment outputs."
     )
@@ -54,6 +67,8 @@ def main() -> None:
     args = parser.parse_args()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
+    # 2) Load the validation-ranked experiment table.  The first row is the
+    # model selected for detailed plots, subgroup tables, and robustness.
     results = pd.read_csv(args.tables_dir / "experiment_results.csv")
     results = results.sort_values("val_f1", ascending=False).reset_index(drop=True)
     best = results.iloc[0]
@@ -77,6 +92,8 @@ def main() -> None:
         "E3_convnext_tiny_aug_laststage": "E3 ConvNeXt, last stage",
         "E4_convnext_tiny_se_aug_laststage": "E4 ConvNeXt-SE, last stage",
     }
+
+    # 3) Write the main experiment comparison table.
     result_display["exp_name"] = result_display["exp_name"].map(experiment_labels)
     result_display.columns = [
         "Experiment",
@@ -93,32 +110,18 @@ def main() -> None:
         column_format="lrrrrrr",
     )
 
+    # 4) Write robustness labels explicitly so the report distinguishes all
+    # photometric, compression, blur/noise, and resampling conditions.
     robustness = pd.read_csv(args.tables_dir / f"{best_name}_robustness.csv")
     robustness_display = robustness[
         ["condition", "value", "accuracy", "precision", "recall", "f1", "roc_auc"]
     ].copy()
-    robustness_display["condition"] = robustness_display["condition"].replace(
-        {
-            "clean": "Clean",
-            "contrast": "Contrast",
-            "jpeg": "JPEG",
-            "resample": "Resample",
-        }
-    )
+    robustness_display["condition"] = [
+        robustness_condition_label(condition)
+        for condition in robustness["condition"]
+    ]
     robustness_display["value"] = [
-        (
-            "--"
-            if condition == "clean"
-            else (
-                f"{value:.1f}x"
-                if condition == "contrast"
-                else (
-                    f"Q{int(value)}"
-                    if condition == "jpeg"
-                    else f"{int(value)} px"
-                )
-            )
-        )
+        robustness_value_label(condition, value)
         for condition, value in zip(
             robustness["condition"], robustness["value"]
         )
@@ -138,6 +141,8 @@ def main() -> None:
         column_format="llrrrrr",
     )
 
+    # 5) Write subgroup tables. Source rows are single-class groups, so the
+    # error column is source-specific false-positive or false-negative rate.
     source = pd.read_csv(args.tables_dir / f"{best_name}_source_errors.csv")
     source_display = source[
         ["source_label", "count", "accuracy", "error_type", "error_rate"]
@@ -164,6 +169,8 @@ def main() -> None:
         column_format="lrrlr",
     )
 
+    # Style rows contain both real and fake images, so full binary metrics are
+    # meaningful for each style.
     style = pd.read_csv(args.tables_dir / f"{best_name}_style_metrics.csv")
     style_display = style[
         ["style_label", "count", "accuracy", "precision", "recall", "f1", "roc_auc"]
@@ -186,6 +193,8 @@ def main() -> None:
         column_format="lrrrrrr",
     )
 
+    # 6) Create macros used in prose.  These keep the report synchronized with
+    # the measured CSV files and avoid hand-copying numbers.
     split_counts = {
         split: len(pd.read_csv(args.tables_dir / f"{split}_split.csv"))
         for split in ("train", "val", "test")
@@ -214,8 +223,8 @@ def main() -> None:
         rf"\newcommand{{\BackboneDelta}}{{{f1_delta('E2_convnext_tiny_aug_frozen', 'E1_mobilenetv2_aug_frozen'):+.3f}}}",
         rf"\newcommand{{\FinetuningDelta}}{{{f1_delta('E3_convnext_tiny_aug_laststage', 'E2_convnext_tiny_aug_frozen'):+.3f}}}",
         rf"\newcommand{{\AttentionDelta}}{{{f1_delta('E4_convnext_tiny_se_aug_laststage', 'E3_convnext_tiny_aug_laststage'):+.3f}}}",
-        rf"\newcommand{{\WorstRobustnessCondition}}{{{latex_escape(str(worst_robustness['condition']).upper() if worst_robustness['condition'] == 'jpeg' else str(worst_robustness['condition']).title())}}}",
-        rf"\newcommand{{\WorstRobustnessValue}}{{{worst_robustness['value']:g}}}",
+        rf"\newcommand{{\WorstRobustnessCondition}}{{{latex_escape(robustness_condition_label(str(worst_robustness['condition'])))}}}",
+        rf"\newcommand{{\WorstRobustnessValue}}{{{latex_escape(robustness_value_label(str(worst_robustness['condition']), float(worst_robustness['value'])))}}}",
         rf"\newcommand{{\WorstRobustnessDelta}}{{{float(worst_robustness['f1']) - clean_f1:+.3f}}}",
         rf"\newcommand{{\HighestErrorSource}}{{{latex_escape(str(highest_source_error['source_label']).replace('_', ' '))}}}",
         rf"\newcommand{{\HighestSourceError}}{{{highest_source_error['error_rate']:.3f}}}",
@@ -225,6 +234,8 @@ def main() -> None:
         rf"\newcommand{{\HighestStyleFOne}}{{{highest_style['f1']:.3f}}}",
     ]
 
+    # 7) Add the optional replication audit table/macros when that independent
+    # post-training audit has been run.
     replication_path = (
         args.replication_tables_dir / "replication_overfitting_results.csv"
     )
@@ -297,6 +308,8 @@ def main() -> None:
     (args.output_dir / "generated_metrics.tex").write_text(
         "\n".join(macros) + "\n", encoding="utf-8"
     )
+
+    # 8) Copy selected measured figures into report-friendly names.
     figure_sources = {
         f"{best_name}_confusion.png": "generated_confusion.png",
         f"{best_name}_roc.png": "generated_roc.png",

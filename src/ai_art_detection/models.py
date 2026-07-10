@@ -1,3 +1,5 @@
+"""Model builders and transfer-learning freeze policies."""
+
 from __future__ import annotations
 
 import torch
@@ -13,16 +15,26 @@ from torchvision.models import (
 
 
 def set_trainable(module: nn.Module, trainable: bool) -> None:
+    """Enable or disable gradients for every parameter in a module."""
     for parameter in module.parameters():
         parameter.requires_grad = trainable
 
 
 def count_trainable_parameters(model: nn.Module) -> int:
-    return sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)
+    """Count parameters that will receive optimizer updates."""
+    return sum(
+        parameter.numel()
+        for parameter in model.parameters()
+        if parameter.requires_grad
+    )
 
 
 class ConvNeXtTinySEBinary(nn.Module):
-    """Feasible final-feature SE ablation, not the paper's full multi-level model."""
+    """Final-feature SE channel-attention variant.
+
+    This is a small insertion experiment on top of ConvNeXt-Tiny, not the
+    paper's full multi-level AttentionConvNeXt model.
+    """
 
     def __init__(
         self,
@@ -34,8 +46,12 @@ class ConvNeXtTinySEBinary(nn.Module):
         super().__init__()
         weights = ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
         base = convnext_tiny(weights=weights)
+
         self.features = base.features
         channels = base.classifier[2].in_features
+
+        # The SE block gates only the final ConvNeXt feature channels.  This is
+        # intentionally a small insertion experiment, not a full reproduction.
         self.pool = nn.AdaptiveAvgPool2d(1)
         self.se = nn.Sequential(
             nn.Linear(channels, channels // reduction, bias=False),
@@ -52,6 +68,7 @@ class ConvNeXtTinySEBinary(nn.Module):
         self.configure_training(mode)
 
     def configure_training(self, mode: str) -> None:
+        """Apply the same freeze policy used by the standard backbones."""
         set_trainable(self, False)
         if mode == "frozen":
             set_trainable(self.se, True)
@@ -76,10 +93,13 @@ def build_model(
     mode: str = "frozen",
     pretrained: bool = True,
 ) -> nn.Module:
+    """Build a binary classifier and apply the requested training mode."""
     if mode not in {"frozen", "last_stage", "full"}:
         raise ValueError(f"Unknown training mode: {mode}")
 
     if model_name == "mobilenet_v2":
+        # MobileNetV2 is the lightweight baseline.  Its classifier is replaced
+        # with a single-logit binary head.
         weights = MobileNet_V2_Weights.DEFAULT if pretrained else None
         model = mobilenet_v2(weights=weights)
         model.classifier[1] = nn.Linear(model.classifier[1].in_features, 1)
@@ -90,6 +110,8 @@ def build_model(
         return model
 
     if model_name == "resnet18":
+        # ResNet18 is kept for compatibility/smoke tests even though it is not
+        # part of the final E0--E4 coursework matrix.
         weights = ResNet18_Weights.DEFAULT if pretrained else None
         model = resnet18(weights=weights)
         model.fc = nn.Linear(model.fc.in_features, 1)
@@ -100,6 +122,7 @@ def build_model(
         return model
 
     if model_name == "convnext_tiny":
+        # ConvNeXt-Tiny is the main paper-inspired backbone.
         weights = ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
         model = convnext_tiny(weights=weights)
         model.classifier[2] = nn.Linear(model.classifier[2].in_features, 1)
@@ -116,6 +139,7 @@ def build_model(
 
 
 def gradcam_target_layer(model: nn.Module, model_name: str) -> nn.Module:
+    """Return the last spatial feature block used for Grad-CAM."""
     if model_name.startswith("convnext"):
         return model.features[7]  # type: ignore[attr-defined]
     if model_name == "mobilenet_v2":

@@ -8,6 +8,7 @@ __pycache__/
 build/
 dist/
 tmp/
+context_notebooks/
 
 data/raw/*
 !data/raw/.gitkeep

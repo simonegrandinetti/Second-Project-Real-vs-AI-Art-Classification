@@ -59,6 +59,24 @@ def test_report_fragments_are_generated_from_measured_outputs(tmp_path: Path):
                 "f1": 0.7,
                 "roc_auc": 0.8,
             },
+            {
+                "condition": "brightness",
+                "value": 1.3,
+                "accuracy": 0.75,
+                "precision": 0.75,
+                "recall": 0.75,
+                "f1": 0.75,
+                "roc_auc": 0.85,
+            },
+            {
+                "condition": "noise",
+                "value": 0.08,
+                "accuracy": 0.65,
+                "precision": 0.65,
+                "recall": 0.65,
+                "f1": 0.65,
+                "roc_auc": 0.75,
+            },
         ]
     ).to_csv(tables / f"{best}_robustness.csv", index=False)
     pd.DataFrame(
@@ -136,6 +154,11 @@ def test_report_fragments_are_generated_from_measured_outputs(tmp_path: Path):
     assert (report / "generated_results_table.tex").exists()
     assert (report / "generated_robustness_table.tex").exists()
     assert (report / "generated_replication_table.tex").exists()
+    robustness_table = (report / "generated_robustness_table.tex").read_text(
+        encoding="utf-8"
+    )
+    assert "Brightness" in robustness_table
+    assert "sigma=0.08" in robustness_table
     macros = (report / "generated_metrics.tex").read_text(encoding="utf-8")
     assert r"\newcommand{\TrainCount}{6,400}" in macros
     assert r"\newcommand{\BestTestFOne}{0.780}" in macros
@@ -152,3 +175,36 @@ def test_report_fragments_are_generated_from_measured_outputs(tmp_path: Path):
         text=True,
     )
     assert (report / "report.pdf").exists()
+
+
+def test_robustness_example_script_generates_panel(tmp_path: Path):
+    image_path = tmp_path / "example.png"
+    Image.new("RGB", (48, 64), color=(120, 80, 40)).save(image_path)
+    split_csv = tmp_path / "split.csv"
+    pd.DataFrame(
+        [
+            {
+                "image_path": str(image_path),
+                "source_label": "Human",
+                "style_label": "Realism",
+            }
+        ]
+    ).to_csv(split_csv, index=False)
+    output = tmp_path / "panel.png"
+
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/make_robustness_examples.py",
+            "--split-csv",
+            str(split_csv),
+            "--output",
+            str(output),
+            "--image-size",
+            "32",
+        ],
+        check=True,
+    )
+    assert output.exists()
+    with Image.open(output) as panel:
+        assert panel.width > panel.height

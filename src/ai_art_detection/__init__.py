@@ -1,5 +1,6 @@
 """Tools for binary detection of AI-generated artwork."""
 
+# Re-export the small public surface used by notebooks, scripts, and tests.
 from .config import ProjectConfig
 from .data import (
     ArtBinaryDataset,

@@ -1,3 +1,10 @@
+"""Dataset scanning, splitting, and DataLoader helpers.
+
+This module is where most of the experimental protocol is enforced.  It turns
+the Kaggle folder layout into tabular metadata, validates the pinned dataset
+inventory, samples exact source/style quotas, and builds deterministic loaders.
+"""
+
 from __future__ import annotations
 
 import random
@@ -19,6 +26,9 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"}
 IMAGENET_MEAN = (0.485, 0.456, 0.406)
 IMAGENET_STD = (0.229, 0.224, 0.225)
 
+# Folder names in Kaggle-style datasets are not always perfectly standardized.
+# Aliases make metadata inference explicit and testable instead of relying on
+# fragile substring checks.
 SOURCE_ALIASES = {
     "Human": {"human", "real", "artbench", "artbench_10", "traditional"},
     "Stable_Diffusion": {
@@ -61,6 +71,9 @@ OFFICIAL_SPLIT_ALIASES = {
     "test": {"test", "testing"},
 }
 
+# Quotas are per style.  With ten styles, the train split becomes
+# 3,200 Human + 1,600 LD + 1,600 SD = 6,400 images, and similarly for
+# validation and test.
 COURSEWORK_SPLIT_QUOTAS: dict[str, dict[str, int]] = {
     "train": {"Human": 320, "Latent_Diffusion": 160, "Stable_Diffusion": 160},
     "val": {"Human": 80, "Latent_Diffusion": 40, "Stable_Diffusion": 40},
@@ -86,6 +99,7 @@ EXPECTED_INVENTORY = {
 
 
 def seed_everything(seed: int = 42) -> None:
+    """Seed Python, NumPy, PyTorch, and cuDNN for reproducible experiments."""
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -95,6 +109,7 @@ def seed_everything(seed: int = 42) -> None:
 
 
 def normalize_component(value: str) -> str:
+    """Normalize a path component before comparing it with aliases."""
     value = Path(value).stem.lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
     return value.strip("_")
@@ -169,6 +184,7 @@ def infer_official_split(path: Path, data_root: Path) -> str:
 
 
 def scan_dataset(data_root: Path | str) -> pd.DataFrame:
+    """Scan all supported image files and return one metadata row per image."""
     data_root = Path(data_root).expanduser().resolve()
     if not data_root.exists():
         raise FileNotFoundError(
@@ -180,6 +196,7 @@ def scan_dataset(data_root: Path | str) -> pd.DataFrame:
     for path in sorted(data_root.rglob("*")):
         if not path.is_file() or path.suffix.lower() not in IMAGE_EXTENSIONS:
             continue
+
         source, binary_label, style = infer_metadata(path, data_root)
         official_split = infer_official_split(path, data_root)
         rows.append(
@@ -210,6 +227,7 @@ def scan_dataset(data_root: Path | str) -> pd.DataFrame:
 
 
 def validate_labels(frame: pd.DataFrame, max_unknown_fraction: float = 0.01) -> None:
+    """Reject scans with too many unknown binary labels."""
     if frame.empty:
         raise ValueError("No supported images were found under the dataset root.")
     unknown = (frame["binary_label"] == -1).mean()
@@ -278,6 +296,7 @@ def sample_source_style_quotas(
     """Sample an exact quota for every source/style pair in one official split."""
     if official_split not in {"train", "test"}:
         raise ValueError("official_split must be 'train' or 'test'.")
+
     styles = tuple(STYLE_ALIASES)
     excluded = set(exclude_paths)
     candidates = frame[
@@ -288,6 +307,9 @@ def sample_source_style_quotas(
     for group_index, (source, count) in enumerate(sorted(per_source_style.items())):
         if count <= 0:
             raise ValueError(f"Quota for {source} must be positive.")
+
+        # Each source quota is applied to every artistic style.  For example,
+        # a Human test quota of 100 means 100 images for each of the ten styles.
         for style_index, style in enumerate(styles):
             group = candidates[
                 (candidates["source_label"] == source)
@@ -298,10 +320,13 @@ def sample_source_style_quotas(
                     f"Need {count} {official_split}/{source}/{style} images, "
                     f"but only {len(group)} are available."
                 )
+
             random_state = seed + group_index * len(styles) + style_index
             selected.append(group.sample(count, random_state=random_state))
+
     if not selected:
         raise ValueError("At least one source quota is required.")
+
     return (
         pd.concat(selected, ignore_index=True)
         .sample(frac=1, random_state=seed)
@@ -319,6 +344,9 @@ def coursework_split(
     missing = {"train", "val", "test"} - set(quotas)
     if missing:
         raise ValueError(f"Missing split quotas: {sorted(missing)}")
+
+    # Training and validation both come from the official training partition,
+    # but validation explicitly excludes every selected training path.
     train = sample_source_style_quotas(
         frame, "train", quotas["train"], seed=seed
     )
@@ -332,9 +360,21 @@ def coursework_split(
     test = sample_source_style_quotas(
         frame, "test", quotas["test"], seed=seed + 20_000
     )
-    path_sets = [set(part["image_path"]) for part in (train, val, test)]
-    if any(path_sets[left] & path_sets[right] for left in range(3) for right in range(left)):
+
+    split_path_sets = {
+        "train": set(train["image_path"]),
+        "val": set(val["image_path"]),
+        "test": set(test["image_path"]),
+    }
+    split_path_values = list(split_path_sets.values())
+    overlaps = [
+        first & second
+        for index, first in enumerate(split_path_values)
+        for second in split_path_values[:index]
+    ]
+    if any(overlaps):
         raise RuntimeError("Coursework split construction produced overlapping paths.")
+
     return train, val, test
 
 
@@ -371,6 +411,11 @@ def balanced_sample(
     seed: int = 42,
     balance_fake_sources: bool = True,
 ) -> pd.DataFrame:
+    """Legacy helper for smaller binary debugging subsets.
+
+    The final coursework protocol uses `coursework_split`; this function stays
+    available for quick experiments and older tests.
+    """
     valid = frame[frame["binary_label"].isin([0, 1])].copy()
     real = valid[valid["binary_label"] == 0]
     fake = valid[valid["binary_label"] == 1]
@@ -443,6 +488,7 @@ def stratified_split(
     test_size: float = 0.15,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Legacy stratified train/validation/test split for arbitrary samples."""
     if val_size <= 0 or test_size <= 0 or val_size + test_size >= 1:
         raise ValueError("val_size and test_size must be positive and sum to less than 1.")
 
@@ -467,6 +513,11 @@ def stratified_split(
 
 
 def get_transforms(image_size: int = 224, augment: bool = False):
+    """Return training and evaluation transforms.
+
+    Evaluation always uses direct resize + ImageNet normalization.  Training can
+    optionally add mild augmentation for the E1--E4 experiments.
+    """
     if augment:
         train_transform = transforms.Compose(
             [
@@ -508,6 +559,8 @@ def get_transforms(image_size: int = 224, augment: bool = False):
 
 
 class ArtBinaryDataset(Dataset):
+    """PyTorch dataset returning images plus labels and subgroup metadata."""
+
     def __init__(self, frame: pd.DataFrame, transform=None):
         self.frame = frame.reset_index(drop=True)
         self.transform = transform
@@ -543,6 +596,7 @@ def build_loaders(
     num_workers: int = 4,
     augment: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
+    """Build train/validation/test DataLoaders for one experiment."""
     train_transform, eval_transform = get_transforms(image_size, augment)
     common = {
         "batch_size": batch_size,

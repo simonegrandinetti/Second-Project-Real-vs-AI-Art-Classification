@@ -7,7 +7,12 @@ from typing import Any
 
 @dataclass(slots=True)
 class ProjectConfig:
-    """Configuration shared by the notebook and experiment runner."""
+    """Shared experiment settings.
+
+    The notebook, scripts, and tests all pass this object around instead of
+    repeating paths and hyperparameters.  Defaults encode the agreed coursework
+    protocol: 224x224 images, batch size 32, eight epochs, and seed 42.
+    """
 
     data_root: Path = Path("data/raw/real-ai-art")
     output_dir: Path = Path("outputs")
@@ -25,10 +30,12 @@ class ProjectConfig:
     seed: int = 42
 
     def make_output_dirs(self) -> None:
+        """Create the standard output folders if they do not already exist."""
         for name in ("figures", "models", "metrics", "tables"):
             (self.output_dir / name).mkdir(parents=True, exist_ok=True)
 
     def as_serializable_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly representation for manifests/checkpoints."""
         values = asdict(self)
         values["data_root"] = str(self.data_root)
         values["output_dir"] = str(self.output_dir)

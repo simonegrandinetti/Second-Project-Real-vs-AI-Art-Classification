@@ -1,4 +1,12 @@
 #!/usr/bin/env python3
+"""Download and validate the pinned AI-ArtBench dataset.
+
+This script is intentionally small and linear because it is the first step of
+the coursework workflow: choose the destination, check that the machine has
+enough free space, download the exact Kaggle version, then validate the
+extracted images before any experiment is allowed to run.
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -19,6 +27,8 @@ MINIMUM_FREE_BYTES = 25 * 1024**3
 
 
 def main() -> None:
+    # 1) Read the command line choices.  The default matches the README and
+    # notebook, so most users can simply run `python scripts/download_dataset.py`.
     parser = argparse.ArgumentParser(
         description="Download and validate the pinned AI-ArtBench dataset."
     )
@@ -30,6 +40,8 @@ def main() -> None:
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
+    # 2) Refuse to start a large download if the destination volume is too
+    # small.  This catches the most common failure before Kaggle work begins.
     destination = args.output_dir.expanduser().resolve()
     destination.mkdir(parents=True, exist_ok=True)
     free_bytes = shutil.disk_usage(destination).free
@@ -38,6 +50,9 @@ def main() -> None:
             f"At least {MINIMUM_FREE_BYTES / 1024**3:.0f} GiB free is required; "
             f"only {free_bytes / 1024**3:.1f} GiB is available."
         )
+
+    # 3) Kaggle public access may work anonymously, but authenticated downloads
+    # should pass credentials through the environment, never through the repo.
     if "KAGGLE_API_TOKEN" not in os.environ:
         print(
             "KAGGLE_API_TOKEN is not set; attempting Kaggle's anonymous "
@@ -50,6 +65,8 @@ def main() -> None:
     )
     print(f"Downloaded to: {downloaded}")
 
+    # 4) The dataset layout is part of the experimental protocol.  Validation
+    # fails loudly if counts, aliases, or image readability do not match.
     frame = scan_dataset(destination)
     validate_dataset_inventory(frame)
     validate_image_readability(frame)
