@@ -11,6 +11,7 @@ from ai_art_detection.evaluation import (
     binary_metrics,
     evaluate_robustness,
     robustness_condition_label,
+    robustness_plot_label,
     robustness_transform,
     robustness_value_label,
     source_error_summary,
@@ -76,6 +77,18 @@ def test_all_robustness_transforms_return_normalized_tensors():
         assert tensor.shape == (3, 32, 32)
     assert ("resample", 64.0) in seen
     assert ("noise", 0.08) in seen
+
+
+def test_robustness_plot_labels_are_unique_and_descriptive():
+    labels = [
+        robustness_plot_label(condition.kind, condition.value)
+        for condition in ROBUSTNESS_CONDITIONS
+    ]
+    assert all(labels)
+    assert len(labels) == len(set(labels))
+    assert "Brightness 1.3x" in labels
+    assert "Noise sigma=0.08" in labels
+    assert "Blur r=2 px" in labels
 
 
 def test_invalid_robustness_transform_is_rejected():

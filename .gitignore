@@ -13,23 +13,19 @@ context_notebooks/
 data/raw/*
 !data/raw/.gitkeep
 
-outputs/figures/*
-!outputs/figures/.gitkeep
-outputs/metrics/*
-!outputs/metrics/.gitkeep
-outputs/models/*
-!outputs/models/.gitkeep
-outputs/tables/*
-!outputs/tables/.gitkeep
-outputs/replication/*
-
+# Report exports are handled outside the code repository.
 report/generated_*
 report/*.aux
 report/*.bbl
 report/*.blg
+report/*.fdb_latexmk
+report/*.fls
 report/*.log
 report/*.out
 report/*.pdf
+report/*.synctex.gz
+*_overleaf.zip
+*overleaf*.zip
 
 .env
 kaggle.json

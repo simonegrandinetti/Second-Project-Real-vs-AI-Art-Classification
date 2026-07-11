@@ -14,8 +14,8 @@ The implementation includes:
 - accuracy, precision, recall, F1, ROC-AUC, confusion matrices, and ROC curves;
 - style metrics and class-appropriate source error rates;
 - photometric, blur/noise, JPEG, and common-resampling robustness tests;
-- Grad-CAM panels, a reproducibility manifest, an executed notebook workflow,
-  and a LaTeX report.
+- Grad-CAM panels, a reproducibility manifest, and an executed notebook
+  workflow.
 
 The SE model is a controlled channel-attention insertion experiment. It does
 not reproduce or claim the paper's multi-level AttentionConvNeXt architecture.
@@ -24,14 +24,55 @@ not reproduce or claim the paper's multi-level AttentionConvNeXt architecture.
 
 Python 3.11 or newer is required.
 
+Recommended conda setup:
+
+```bash
+conda env create -f environment.yml
+conda activate ai-art-detection
+```
+
+Alternative `venv` setup:
+
 ```bash
 python -m venv .venv
 source .venv/bin/activate
-python -m pip install -e ".[dev,data]"
+python -m pip install --upgrade pip
 ```
 
-Install the CUDA-specific PyTorch build first if the default wheel is not
-appropriate for the machine.
+Choose the PyTorch build for the machine, then install the remaining
+requirements. For the default PyPI build:
+
+```bash
+python -m pip install torch torchvision
+python -m pip install -r requirements.txt
+```
+
+For CUDA 11.8 PyTorch wheels:
+
+```bash
+python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
+python -m pip install -r requirements.txt
+```
+
+To register the environment as a Jupyter kernel, run:
+
+```bash
+python -m ipykernel install --user --name ai-art-detection \
+  --display-name "Python (ai-art-detection)"
+```
+
+The default conda environment uses the CUDA 11.8 PyTorch stack declared in
+`environment.yml`, including `cuda-nvrtc-dev=11.8` for cuDNN convolution
+support. For a CPU-only machine, remove `pytorch-cuda=11.8` and
+`cuda-nvrtc-dev=11.8`, then install the CPU PyTorch packages appropriate for
+that system before creating or updating the environment.
+
+To update an existing environment after dependency changes:
+
+```bash
+conda env update -f environment.yml --prune
+python -m pip install --upgrade -r requirements.txt
+```
 
 ## 2. Download and validate AI-ArtBench
 
@@ -49,8 +90,8 @@ python scripts/download_dataset.py
 unset KAGGLE_API_TOKEN
 ```
 
-Do not place tokens in this repository. Images, credentials, checkpoints, and
-generated outputs are excluded by `.gitignore`.
+Do not place tokens in this repository. Images, credentials, checkpoints,
+generated outputs, and report export packages are excluded by `.gitignore`.
 Review the dataset card's specified license before use and do not redistribute
 the downloaded images with the coursework source.
 
@@ -121,7 +162,7 @@ The resulting table compares clean-training, primary-test, and replication F1
 for E0-E4, with source/style-stratified bootstrap confidence intervals. It is a
 same-dataset overfitting and stability check, not an unseen-generator test.
 
-## 5. Notebook and report
+## 5. Notebook and external report assets
 
 The notebook mirrors the complete workflow:
 
@@ -129,18 +170,10 @@ The notebook mirrors the complete workflow:
 jupyter lab notebooks/01_ai_art_detection.ipynb
 ```
 
-After the five experiments finish, generate the measured LaTeX fragments and
-compile the report:
-
-```bash
-python scripts/make_latex_table.py
-python scripts/make_robustness_examples.py
-cd report
-tectonic report.tex
-```
-
-`report/report.tex` deliberately refuses to compile without measured result
-fragments. Replace `Your Name` before submission.
+The code repository treats report exports as external artifacts. Keep generated
+LaTeX fragments, copied figures, compiled PDFs, and Overleaf-ready archives out
+of commits; regenerate or package them separately when needed from the current
+experiment outputs.
 
 ## 6. Verification
 
@@ -169,8 +202,7 @@ test.
 ```text
 src/ai_art_detection/   data, model, training, evaluation, and Grad-CAM code
 notebooks/              end-to-end coursework notebook
-scripts/                download, experiment, and report-generation commands
+scripts/                download, experiment, and local post-processing commands
 tests/                  dataset-independent verification
-report/                 LaTeX source and bibliography
 outputs/                generated metrics, figures, checkpoints, and splits
 ```
