@@ -170,11 +170,6 @@ The notebook mirrors the complete workflow:
 jupyter lab notebooks/01_ai_art_detection.ipynb
 ```
 
-The code repository treats report exports as external artifacts. Keep generated
-LaTeX fragments, copied figures, compiled PDFs, and Overleaf-ready archives out
-of commits; regenerate or package them separately when needed from the current
-experiment outputs.
-
 ## 6. Verification
 
 ```bash
