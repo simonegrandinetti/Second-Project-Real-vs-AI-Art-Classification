@@ -1,0 +1,4 @@
+source_label,count,accuracy,error_type,error_rate
+Human,1000,0.951,false_positive_rate,0.049
+Latent_Diffusion,500,0.902,false_negative_rate,0.098
+Stable_Diffusion,500,0.924,false_negative_rate,0.076

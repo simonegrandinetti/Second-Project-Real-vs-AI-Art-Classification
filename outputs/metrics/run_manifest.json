@@ -1,0 +1,86 @@
+{
+  "created_utc": "2026-07-11T15:49:49.816268+00:00",
+  "command": [
+    "/home/simone_grandinetti/miniconda3/envs/ai-art-detection/bin/python",
+    "scripts/run_experiments.py",
+    "--data-root",
+    "data/raw/real-ai-art"
+  ],
+  "config": {
+    "data_root": "data/raw/real-ai-art",
+    "output_dir": "outputs",
+    "dataset_handle": "ravidussilva/real-ai-art/versions/5",
+    "protocol": "official_coursework_10k",
+    "image_size": 224,
+    "batch_size": 32,
+    "num_workers": 4,
+    "epochs": 8,
+    "lr_head": 0.001,
+    "lr_finetune": 0.0001,
+    "weight_decay": 0.0001,
+    "patience": 3,
+    "threshold": 0.5,
+    "seed": 42
+  },
+  "environment": {
+    "python": "3.12.13 | packaged by conda-forge | (main, Mar  5 2026, 16:50:00) [GCC 14.3.0]",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "torch": "2.3.1",
+    "torchvision": "0.18.1",
+    "device": "cuda",
+    "cuda_available": true,
+    "cuda_device_name": "NVIDIA GeForce RTX 2060"
+  },
+  "dataset": {
+    "images": 185015,
+    "inventory": [
+      {
+        "official_split": "test",
+        "source_label": "Human",
+        "count": 10000
+      },
+      {
+        "official_split": "test",
+        "source_label": "Latent_Diffusion",
+        "count": 10000
+      },
+      {
+        "official_split": "test",
+        "source_label": "Stable_Diffusion",
+        "count": 10000
+      },
+      {
+        "official_split": "train",
+        "source_label": "Human",
+        "count": 50000
+      },
+      {
+        "official_split": "train",
+        "source_label": "Latent_Diffusion",
+        "count": 52092
+      },
+      {
+        "official_split": "train",
+        "source_label": "Stable_Diffusion",
+        "count": 52923
+      }
+    ]
+  },
+  "selected_split_counts": {
+    "train": {
+      "Human": 3200,
+      "Latent_Diffusion": 1600,
+      "Stable_Diffusion": 1600
+    },
+    "val": {
+      "Human": 800,
+      "Stable_Diffusion": 400,
+      "Latent_Diffusion": 400
+    },
+    "test": {
+      "Human": 1000,
+      "Latent_Diffusion": 500,
+      "Stable_Diffusion": 500
+    }
+  }
+}

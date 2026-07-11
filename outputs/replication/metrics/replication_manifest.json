@@ -1,0 +1,50 @@
+{
+  "created_utc": "2026-07-11T16:26:21.187019+00:00",
+  "command": [
+    "/home/simone_grandinetti/miniconda3/envs/ai-art-detection/bin/python",
+    "scripts/evaluate_replication.py"
+  ],
+  "dataset_handle": "ravidussilva/real-ai-art/versions/5",
+  "protocol": "official_test_replication_2k",
+  "seed": 4242,
+  "quotas_per_source_style": {
+    "Human": 100,
+    "Latent_Diffusion": 50,
+    "Stable_Diffusion": 50
+  },
+  "preprocessing": "standard_resize_224_imagenet",
+  "image_size": 224,
+  "threshold": 0.5,
+  "bootstrap_resamples": 1000,
+  "split_counts": {
+    "train": 6400,
+    "validation": 1600,
+    "original_test": 2000,
+    "replication_test": 2000
+  },
+  "split_path_hashes": {
+    "train": "2998ab001ffc412ce4a1b5f0e761cbbd65250e9bbe298d8800d3fbc16dbc016d",
+    "validation": "b2914289cdb8fa60967836aa6db4a5b539be41d8e2a776b6870b9894ed46f156",
+    "original_test": "09831175c172b8aff19ba27b99778765eddd53af2befccb10438a80450d11c18",
+    "replication_test": "5579eb266b4a28cd858c943de9654f4cebbfc859c55fa4b98eb05edf2111b247"
+  },
+  "overlap_counts": {
+    "replication_vs_train": 0,
+    "replication_vs_val": 0,
+    "replication_vs_test": 0
+  },
+  "checkpoints": [
+    "E0_mobilenetv2_noaug_frozen_best.pt",
+    "E1_mobilenetv2_aug_frozen_best.pt",
+    "E2_convnext_tiny_aug_frozen_best.pt",
+    "E3_convnext_tiny_aug_laststage_best.pt",
+    "E4_convnext_tiny_se_aug_laststage_best.pt"
+  ],
+  "environment": {
+    "python": "3.12.13 | packaged by conda-forge | (main, Mar  5 2026, 16:50:00) [GCC 14.3.0]",
+    "platform": "Linux-6.18.33.2-microsoft-standard-WSL2-x86_64-with-glibc2.35",
+    "torch": "2.3.1",
+    "torchvision": "0.18.1",
+    "device": "cuda"
+  }
+}

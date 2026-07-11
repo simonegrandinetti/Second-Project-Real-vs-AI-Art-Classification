@@ -1,0 +1,22 @@
+{
+  "exp_name": "E1_mobilenetv2_aug_frozen",
+  "model_name": "mobilenet_v2",
+  "mode": "frozen",
+  "augment": true,
+  "best_epoch": 4,
+  "best_val_f1": 0.9318181818181818,
+  "val_accuracy": 0.9325,
+  "val_precision": 0.9413265306122449,
+  "val_recall": 0.9225,
+  "val_f1": 0.9318181818181818,
+  "val_roc_auc": 0.9824812499999999,
+  "val_loss": 0.20512816309928894,
+  "test_accuracy": 0.932,
+  "test_precision": 0.9490644490644491,
+  "test_recall": 0.913,
+  "test_f1": 0.9306829765545361,
+  "test_roc_auc": 0.984016,
+  "test_loss": 0.19864894902706146,
+  "trainable_params": 1281,
+  "time_min": 1.186286753599999
+}

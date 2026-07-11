@@ -1,0 +1,22 @@
+{
+  "exp_name": "E2_convnext_tiny_aug_frozen",
+  "model_name": "convnext_tiny",
+  "mode": "frozen",
+  "augment": true,
+  "best_epoch": 8,
+  "best_val_f1": 0.9685138539042821,
+  "val_accuracy": 0.96875,
+  "val_precision": 0.9758883248730964,
+  "val_recall": 0.96125,
+  "val_f1": 0.9685138539042821,
+  "val_roc_auc": 0.9949671875,
+  "val_loss": 0.08796488106250763,
+  "test_accuracy": 0.9785,
+  "test_precision": 0.9799398194583752,
+  "test_recall": 0.977,
+  "test_f1": 0.9784677015523285,
+  "test_roc_auc": 0.9975430000000001,
+  "test_loss": 0.06717077280580998,
+  "trainable_params": 2305,
+  "time_min": 2.0022654351333284
+}

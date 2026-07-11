@@ -1,0 +1,22 @@
+{
+  "exp_name": "E4_convnext_tiny_se_aug_laststage",
+  "model_name": "convnext_tiny_se",
+  "mode": "last_stage",
+  "augment": true,
+  "best_epoch": 6,
+  "best_val_f1": 0.9918392969240427,
+  "val_accuracy": 0.991875,
+  "val_precision": 0.9962168978562421,
+  "val_recall": 0.9875,
+  "val_f1": 0.9918392969240427,
+  "val_roc_auc": 0.999725,
+  "val_loss": 0.024231067495275056,
+  "test_accuracy": 0.992,
+  "test_precision": 0.9910179640718563,
+  "test_recall": 0.993,
+  "test_f1": 0.9920079920079921,
+  "test_roc_auc": 0.999307,
+  "test_loss": 0.035365884023427496,
+  "trainable_params": 14365441,
+  "time_min": 2.383227647966669
+}
