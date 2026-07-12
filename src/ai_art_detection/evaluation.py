@@ -175,7 +175,11 @@ def evaluate(
 
 
 def metrics_by_group(predictions: pd.DataFrame, group: str) -> pd.DataFrame:
-    """Compute full binary metrics independently for each subgroup."""
+    """Compute full binary metrics independently for each subgroup.
+    
+    predictions: DataFrame with columns ["label", "logit", group]
+    group: Column name to group by (e.g., "source_label" or "style_label")
+    """
     rows = []
     for name, part in predictions.groupby(group, dropna=False):
         values = binary_metrics(part["label"], part["logit"])
