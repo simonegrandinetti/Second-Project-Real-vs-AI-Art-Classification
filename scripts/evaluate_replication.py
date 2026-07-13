@@ -47,6 +47,12 @@ from ai_art_detection.replication import f1_audit_intervals, split_path_hash
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse replication paths, sampling settings, and experiment selection.
+
+    Returns:
+        Parsed command-line namespace. Defaults reproduce the 2,000-image audit with
+        seed 4242, 1,000 bootstrap resamples, and all five saved experiments.
+    """
     parser = argparse.ArgumentParser(
         description="Evaluate saved checkpoints on a disjoint clean replication holdout."
     )
@@ -69,7 +75,18 @@ def parse_args() -> argparse.Namespace:
 def read_original_splits(
     tables_dir: Path,
 ) -> dict[str, pd.DataFrame]:
-    """Load the original split CSVs and reject any path overlap."""
+    """Load the original split CSVs and verify their isolation.
+
+    Args:
+        tables_dir: Directory containing ``train_split.csv``, ``val_split.csv``, and
+            ``test_split.csv`` from the primary experiment run.
+
+    Returns:
+        A dictionary mapping ``train``, ``val``, and ``test`` to their DataFrames.
+
+    Raises:
+        ValueError: If any image path occurs in more than one original split.
+    """
     splits = {
         name: pd.read_csv(tables_dir / f"{name}_split.csv")
         for name in ("train", "val", "test")
@@ -88,6 +105,22 @@ def read_original_splits(
 
 
 def main() -> None:
+    """Run the post-training replication audit for the requested checkpoints.
+
+    The workflow rescans the pinned dataset, samples a disjoint official-test holdout,
+    evaluates every checkpoint on clean training and replication images, reads the
+    unchanged original-test predictions, and writes all new artifacts under
+    ``outputs/replication``. It never retrains a model or invokes a robustness
+    resampling transform.
+
+    Raises:
+        ValueError: If the source dataset, original splits, or stored predictions fail
+            their consistency checks.
+        RuntimeError: If replication exclusions or the common model path order are
+            violated.
+        FileNotFoundError: If a required split, prediction file, or checkpoint is
+            absent.
+    """
     # 1) Read audit settings. Defaults match the report protocol.
     args = parse_args()
     config = ProjectConfig(

@@ -1,3 +1,5 @@
+"""Check deterministic bootstrap intervals and split-membership fingerprints."""
+
 import numpy as np
 import pandas as pd
 
@@ -9,6 +11,14 @@ from ai_art_detection.replication import (
 
 
 def predictions(logits: list[float]) -> pd.DataFrame:
+    """Build a balanced four-row prediction table for replication unit tests.
+
+    Args:
+        logits: One binary logit for each fixed human or generated-art label.
+
+    Returns:
+        Prediction metadata containing the columns required by the bootstrap helpers.
+    """
     labels = [0, 0, 1, 1]
     return pd.DataFrame(
         {

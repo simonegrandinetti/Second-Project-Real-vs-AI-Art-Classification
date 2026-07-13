@@ -1,4 +1,10 @@
-"""Training loop utilities for binary PyTorch classifiers."""
+"""Train one-logit PyTorch classifiers with validation-based model selection.
+
+The training loop deliberately has no access to the test split. AdamW updates
+only parameters marked trainable by the model builder, a plateau scheduler
+reacts to validation F1, and early stopping restores the best validation state
+before evaluation artifacts are produced.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +24,16 @@ from .evaluation import binary_metrics, evaluate
 
 @dataclass(slots=True)
 class TrainResult:
-    """Result returned after fitting one model."""
+    """Collect the selected model and its training history.
+
+    Attributes:
+        model: Input model restored to its highest-validation-F1 state.
+        history: One row per completed epoch with prefixed train/validation metrics
+            and the learning rate used after scheduling.
+        best_epoch: One-based epoch at which validation F1 was highest.
+        best_val_f1: Validation F1 used to select ``model``.
+        elapsed_seconds: Wall-clock fitting time measured with a monotonic clock.
+    """
 
     model: nn.Module
     history: pd.DataFrame
@@ -36,7 +51,22 @@ def train_one_epoch(
     scaler: torch.cuda.amp.GradScaler | None = None,
     threshold: float = 0.5,
 ) -> dict[str, float]:
-    """Train for one epoch and return thresholded binary metrics."""
+    """Run one optimizer pass over a non-empty training loader.
+
+    Args:
+        model: Binary classifier returning one logit per image.
+        loader: Training loader whose batches contain ``image`` and float ``label``.
+        optimizer: Optimizer configured with the model's trainable parameters.
+        criterion: Loss accepting flattened logits and labels.
+        device: Training device.
+        scaler: Optional CUDA gradient scaler. It is ignored on non-CUDA devices.
+        threshold: Fake-class probability threshold used only for reported metrics.
+
+    Returns:
+        Accuracy, precision, recall, F1, ROC-AUC, and sample-weighted mean training
+        loss. CUDA execution uses automatic mixed precision; CPU execution remains
+        full precision.
+    """
     model.train()
     loss_total = 0.0
     labels_all: list[float] = []
@@ -83,7 +113,30 @@ def fit(
     checkpoint_metadata: dict | None = None,
     threshold: float = 0.5,
 ) -> TrainResult:
-    """Fit a model with AdamW, LR scheduling, and validation-F1 early stopping."""
+    """Fit a model and restore the checkpoint with the best validation F1.
+
+    Args:
+        model: Classifier whose trainable flags already encode the transfer policy.
+        train_loader: Augmented or clean training loader.
+        val_loader: Clean validation loader used for scheduling and model selection.
+        device: Device used for training and validation.
+        learning_rate: Initial AdamW learning rate.
+        weight_decay: Decoupled AdamW weight-decay coefficient.
+        epochs: Maximum number of epochs.
+        patience: Stop after this many consecutive epochs without an F1 improvement.
+        checkpoint_path: Optional destination for the best checkpoint.
+        checkpoint_metadata: Context stored alongside checkpoint weights and scores.
+        threshold: Fixed probability threshold used for train and validation metrics.
+
+    Returns:
+        A :class:`TrainResult` whose model has been restored to the best recorded
+        state, even when later epochs performed worse.
+
+    Note:
+        A checkpoint contains ``model_state_dict``, ``best_epoch``, ``best_val_f1``,
+        and ``metadata``. Progress for every completed epoch is printed to standard
+        output. Equal F1 values do not replace an earlier checkpoint.
+    """
     model.to(device)
     criterion = nn.BCEWithLogitsLoss()
     optimizer = torch.optim.AdamW(
@@ -164,6 +217,12 @@ def fit(
 
 
 def save_result(result: dict, output_path: Path) -> None:
+    """Serialize an experiment summary as indented JSON.
+
+    Args:
+        result: JSON-serializable metrics and experiment metadata.
+        output_path: Destination file. Missing parent directories are created.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="utf-8") as handle:
         json.dump(result, handle, indent=2)

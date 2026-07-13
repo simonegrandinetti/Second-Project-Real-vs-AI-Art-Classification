@@ -99,7 +99,16 @@ EXPECTED_INVENTORY = {
 
 
 def seed_everything(seed: int = 42) -> None:
-    """Seed Python, NumPy, PyTorch, and cuDNN for reproducible experiments."""
+    """Seed the random-number generators used by the experiment pipeline.
+
+    Args:
+        seed: Shared seed for Python, NumPy, CPU PyTorch, and all CUDA devices.
+
+    Note:
+        cuDNN benchmarking is disabled and deterministic kernels are requested. This
+        improves repeatability but can reduce training speed, and exact reproducibility
+        can still depend on hardware and PyTorch versions.
+    """
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
@@ -109,19 +118,44 @@ def seed_everything(seed: int = 42) -> None:
 
 
 def normalize_component(value: str) -> str:
-    """Normalize a path component before comparing it with aliases."""
+    """Convert a path component to the canonical alias-matching form.
+
+    Args:
+        value: Directory name, filename, or other path-like component.
+
+    Returns:
+        The lowercase stem with punctuation collapsed to underscores and leading or
+        trailing separators removed.
+    """
     value = Path(value).stem.lower()
     value = re.sub(r"[^a-z0-9]+", "_", value)
     return value.strip("_")
 
 
 def _matches(component: str, alias: str) -> bool:
-    """Match directory-like labels without treating 'surrealism' as 'real'."""
+    """Match a complete alias without treating ``surrealism`` as ``real``."""
     return component == alias or component.startswith(f"{alias}_")
 
 
 def infer_metadata(path: Path, data_root: Path) -> tuple[str, int, str]:
-    """Infer source, binary target, and style from the relative path."""
+    """Infer an image's source, binary target, and artistic style.
+
+    Specific generator aliases are checked before generic AI aliases. This ordering
+    preserves the Latent Diffusion and Stable Diffusion subgroups used in sampling.
+
+    Args:
+        path: Image path located below ``data_root``.
+        data_root: Root against which directory components are interpreted.
+
+    Returns:
+        A ``(source_label, binary_label, style_label)`` tuple. Human images receive
+        binary label ``0``, known or generic AI sources receive ``1``, and an
+        unrecognized source receives ``-1``. Unknown text labels are returned as
+        ``"Unknown"``.
+
+    Raises:
+        ValueError: If ``path`` is not contained below ``data_root``.
+    """
     relative = path.relative_to(data_root)
     components = [normalize_component(part) for part in relative.parts]
 
@@ -166,7 +200,19 @@ def infer_metadata(path: Path, data_root: Path) -> tuple[str, int, str]:
 
 
 def infer_official_split(path: Path, data_root: Path) -> str:
-    """Infer the published AI-ArtBench train/test partition from directory names."""
+    """Infer the official AI-ArtBench partition encoded in a path.
+
+    Args:
+        path: Image path located below ``data_root``.
+        data_root: Root against which directory components are interpreted.
+
+    Returns:
+        ``"train"`` or ``"test"`` when exactly one split alias is found; otherwise
+        ``"Unknown"`` so ambiguous layouts fail later validation.
+
+    Raises:
+        ValueError: If ``path`` is not contained below ``data_root``.
+    """
     relative = path.relative_to(data_root)
     components = [normalize_component(part) for part in relative.parts[:-1]]
     matches = {
@@ -184,7 +230,20 @@ def infer_official_split(path: Path, data_root: Path) -> str:
 
 
 def scan_dataset(data_root: Path | str) -> pd.DataFrame:
-    """Scan all supported image files and return one metadata row per image."""
+    """Scan an extracted dataset and build the canonical metadata table.
+
+    Args:
+        data_root: Directory containing the extracted AI-ArtBench hierarchy.
+
+    Returns:
+        One row per supported image, sorted by path. Columns are ``image_path``,
+        ``source_label``, ``binary_label``, ``binary_name``, ``style_label``,
+        ``official_split``, and ``extension``. The scanner records unknown metadata;
+        callers choose the appropriate strictness through the validation helpers.
+
+    Raises:
+        FileNotFoundError: If the dataset root does not exist.
+    """
     data_root = Path(data_root).expanduser().resolve()
     if not data_root.exists():
         raise FileNotFoundError(
@@ -227,7 +286,16 @@ def scan_dataset(data_root: Path | str) -> pd.DataFrame:
 
 
 def validate_labels(frame: pd.DataFrame, max_unknown_fraction: float = 0.01) -> None:
-    """Reject scans with too many unknown binary labels."""
+    """Check that a scanned table contains enough recognized binary labels.
+
+    Args:
+        frame: Metadata table produced by :func:`scan_dataset`.
+        max_unknown_fraction: Largest permitted fraction of rows with label ``-1``.
+
+    Raises:
+        ValueError: If the table is empty or its unknown-label fraction exceeds the
+            requested limit.
+    """
     if frame.empty:
         raise ValueError("No supported images were found under the dataset root.")
     unknown = (frame["binary_label"] == -1).mean()
@@ -243,7 +311,19 @@ def validate_dataset_inventory(
     frame: pd.DataFrame,
     expected: Mapping[tuple[str, str], int] = EXPECTED_INVENTORY,
 ) -> None:
-    """Fail fast if the pinned dataset is incomplete or has an unexpected layout."""
+    """Verify that metadata matches an expected official-split inventory.
+
+    This is the strict gate used before final experiments. In addition to exact source
+    counts, every row must have a recognized style, source, and official partition.
+
+    Args:
+        frame: Scanned metadata to validate.
+        expected: Exact image count for each ``(official_split, source_label)`` pair.
+
+    Raises:
+        ValueError: If labels or path-derived metadata are unknown, or if grouped
+            counts differ from ``expected``.
+    """
     validate_labels(frame, max_unknown_fraction=0.0)
     unknown_styles = frame["style_label"].eq("Unknown")
     unknown_splits = frame["official_split"].eq("Unknown")
@@ -266,7 +346,17 @@ def validate_image_readability(
     *,
     progress_every: int | None = 25_000,
 ) -> None:
-    """Verify that every selected image can be decoded by Pillow."""
+    """Verify that every image path can be decoded by Pillow.
+
+    Args:
+        frame: Table containing an ``image_path`` column.
+        progress_every: Print progress after this many images. Use ``None`` or ``0``
+            to keep validation quiet.
+
+    Raises:
+        ValueError: If one or more images cannot be opened and verified. At most ten
+            failures are collected before validation stops.
+    """
     failures = []
     for index, path in enumerate(frame["image_path"], start=1):
         try:
@@ -293,7 +383,27 @@ def sample_source_style_quotas(
     seed: int = 42,
     exclude_paths: Iterable[str] = (),
 ) -> pd.DataFrame:
-    """Sample an exact quota for every source/style pair in one official split."""
+    """Sample exact, deterministic quotas from one official partition.
+
+    Each value in ``per_source_style`` is applied independently to all ten artistic
+    styles. For example, ``{"Human": 100}`` selects 100 human images per style,
+    not 100 images in total. Excluded paths are removed before availability checks.
+
+    Args:
+        frame: Canonical metadata containing source, style, split, and path columns.
+        official_split: Published source pool to sample: ``"train"`` or ``"test"``.
+        per_source_style: Number of images required for every requested source/style
+            pair.
+        seed: Base seed used for group sampling and final row shuffling.
+        exclude_paths: Image paths that must not appear in the result.
+
+    Returns:
+        A shuffled DataFrame containing every requested quota exactly once.
+
+    Raises:
+        ValueError: If the split is invalid, a quota is non-positive, no quota is
+            supplied, or a source/style group is undersized after exclusions.
+    """
     if official_split not in {"train", "test"}:
         raise ValueError("official_split must be 'train' or 'test'.")
 
@@ -340,7 +450,25 @@ def coursework_split(
     seed: int = 42,
     quotas: Mapping[str, Mapping[str, int]] = COURSEWORK_SPLIT_QUOTAS,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Build the fixed 6,400/1,600/2,000 official-split coursework protocol."""
+    """Build deterministic train, validation, and test coursework splits.
+
+    Training and validation are sampled without overlap from the official training
+    partition. Test data comes only from the official test partition. With the default
+    per-style quotas, the returned sizes are 6,400, 1,600, and 2,000 images.
+
+    Args:
+        frame: Validated canonical metadata for the complete dataset.
+        seed: Base sampling seed. Fixed offsets derive validation and test seeds.
+        quotas: Per-style source quotas keyed by ``train``, ``val``, and ``test``.
+
+    Returns:
+        ``(train, validation, test)`` DataFrames with reset indices and no shared
+        image paths.
+
+    Raises:
+        ValueError: If a split quota is missing or a requested group is undersized.
+        RuntimeError: If the constructed splits unexpectedly overlap.
+    """
     missing = {"train", "val", "test"} - set(quotas)
     if missing:
         raise ValueError(f"Missing split quotas: {sorted(missing)}")
@@ -385,7 +513,21 @@ def replication_test_split(
     seed: int = 4242,
     per_source_style: Mapping[str, int] = REPLICATION_TEST_QUOTAS,
 ) -> pd.DataFrame:
-    """Build a second official-test holdout disjoint from all prior splits."""
+    """Build the independent official-test replication holdout.
+
+    Args:
+        frame: Canonical metadata for the complete dataset.
+        exclude_paths: Paths from all original train, validation, and test splits.
+        seed: Sampling seed reserved for the post-training audit.
+        per_source_style: Exact per-style quotas for each requested source.
+
+    Returns:
+        A deterministic replication DataFrame with no excluded image paths.
+
+    Raises:
+        ValueError: If exclusions are empty or a requested quota cannot be filled.
+        RuntimeError: If an excluded path appears despite the sampling guard.
+    """
     excluded = set(exclude_paths)
     if not excluded:
         raise ValueError("Replication sampling requires non-empty exclusions.")
@@ -415,6 +557,20 @@ def balanced_sample(
 
     The final coursework protocol uses `coursework_split`; this function stays
     available for quick experiments and older tests.
+
+    Args:
+        frame: Metadata containing binary and source labels.
+        n_real: Requested number of human images.
+        n_fake: Requested number of AI-generated images.
+        seed: Sampling and final-shuffle seed.
+        balance_fake_sources: If true, draw fake rows round-robin across generators.
+
+    Returns:
+        A shuffled binary sample. If a class is undersized, all available rows from
+        that class are returned and a warning is emitted.
+
+    Raises:
+        ValueError: If the input does not contain both binary classes.
     """
     valid = frame[frame["binary_label"].isin([0, 1])].copy()
     real = valid[valid["binary_label"] == 0]
@@ -462,6 +618,7 @@ def balanced_sample(
 
 
 def _candidate_strata(frame: pd.DataFrame) -> Iterable[pd.Series]:
+    """Yield stratification labels from most detailed to most general."""
     yield (
         frame["binary_label"].astype(str)
         + "|"
@@ -474,6 +631,7 @@ def _candidate_strata(frame: pd.DataFrame) -> Iterable[pd.Series]:
 
 
 def _choose_strata(frame: pd.DataFrame, held_out_fraction: float) -> pd.Series:
+    """Choose the most detailed stratification that supports a valid split."""
     held_out_count = int(np.ceil(len(frame) * held_out_fraction))
     for candidate in _candidate_strata(frame):
         counts = candidate.value_counts()
@@ -488,7 +646,24 @@ def stratified_split(
     test_size: float = 0.15,
     seed: int = 42,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Legacy stratified train/validation/test split for arbitrary samples."""
+    """Split an arbitrary sample while preserving the richest viable strata.
+
+    This legacy helper first tries label/source/style strata, then progressively falls
+    back to label/source and label-only strata when groups are too small.
+
+    Args:
+        frame: Sample containing binary, source, and style labels.
+        val_size: Fraction of all rows assigned to validation.
+        test_size: Fraction of all rows assigned to testing.
+        seed: Random seed passed to both scikit-learn splits.
+
+    Returns:
+        ``(train, validation, test)`` DataFrames with reset indices.
+
+    Raises:
+        ValueError: If split fractions are invalid or the sample is too small for a
+            stratified binary split.
+    """
     if val_size <= 0 or test_size <= 0 or val_size + test_size >= 1:
         raise ValueError("val_size and test_size must be positive and sum to less than 1.")
 
@@ -517,6 +692,16 @@ def get_transforms(image_size: int = 224, augment: bool = False):
 
     Evaluation always uses direct resize + ImageNet normalization.  Training can
     optionally add mild augmentation for the E1--E4 experiments.
+
+    Args:
+        image_size: Height and width of the returned image tensors.
+        augment: Add random crop, flip, mild colour jitter, and autocontrast to the
+            training pipeline when true.
+
+    Returns:
+        ``(training_transform, evaluation_transform)``. Both produce normalized
+        ``float32`` tensors with shape ``(3, image_size, image_size)`` using the
+        ImageNet channel mean and standard deviation expected by pretrained models.
     """
     if augment:
         train_transform = transforms.Compose(
@@ -559,9 +744,20 @@ def get_transforms(image_size: int = 224, augment: bool = False):
 
 
 class ArtBinaryDataset(Dataset):
-    """PyTorch dataset returning images plus labels and subgroup metadata."""
+    """Load RGB artwork and preserve the metadata needed during evaluation.
+
+    The input frame must contain ``image_path``, ``binary_label``, ``source_label``,
+    and ``style_label``. Each item is a dictionary with ``image``, scalar float
+    ``label``, ``path``, ``source_label``, and ``style_label`` entries.
+
+    Args:
+        frame: Image-level metadata. Its index is reset and its rows are otherwise
+            preserved.
+        transform: Optional callable applied to the decoded Pillow RGB image.
+    """
 
     def __init__(self, frame: pd.DataFrame, transform=None):
+        """Store a reset-index copy of the metadata and its image transform."""
         self.frame = frame.reset_index(drop=True)
         self.transform = transform
 
@@ -569,6 +765,7 @@ class ArtBinaryDataset(Dataset):
         return len(self.frame)
 
     def __getitem__(self, index: int) -> dict:
+        """Load one image and return its tensor-ready sample dictionary."""
         row = self.frame.iloc[index]
         path = row["image_path"]
         try:
@@ -596,7 +793,22 @@ def build_loaders(
     num_workers: int = 4,
     augment: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
-    """Build train/validation/test DataLoaders for one experiment."""
+    """Build the three DataLoaders used by one experiment.
+
+    Args:
+        train: Training metadata.
+        val: Validation metadata.
+        test: Test metadata.
+        image_size: Square model input size.
+        batch_size: Images per batch in every loader.
+        num_workers: Worker processes per loader.
+        augment: Enable mild random augmentation only for training images.
+
+    Returns:
+        ``(train_loader, validation_loader, test_loader)``. Training rows are
+        shuffled; validation and test rows retain their DataFrame order. CUDA hosts
+        use pinned memory, and worker processes remain persistent when requested.
+    """
     train_transform, eval_transform = get_transforms(image_size, augment)
     common = {
         "batch_size": batch_size,
@@ -622,7 +834,19 @@ def build_standard_eval_loader(
     batch_size: int = 32,
     num_workers: int = 4,
 ) -> DataLoader:
-    """Build a deterministic clean loader with no augmentation or resampling."""
+    """Build the clean loader used by the independent replication audit.
+
+    Args:
+        frame: Metadata to evaluate in its existing row order.
+        image_size: Direct-resize height and width.
+        batch_size: Images per evaluation batch.
+        num_workers: Worker processes used to decode images.
+
+    Returns:
+        A non-shuffled DataLoader applying only direct resize, tensor conversion, and
+        ImageNet normalization. No augmentation or common-resampling transform enters
+        this pipeline.
+    """
     _, eval_transform = get_transforms(image_size, augment=False)
     return DataLoader(
         ArtBinaryDataset(frame, eval_transform),

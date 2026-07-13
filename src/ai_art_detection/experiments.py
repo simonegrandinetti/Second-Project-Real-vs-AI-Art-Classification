@@ -1,4 +1,9 @@
-"""Experiment definitions and the one-experiment training/evaluation flow."""
+"""Define the E0--E4 matrix and run one experiment from end to end.
+
+An experiment joins an architecture, freeze policy, and augmentation choice.
+The runner then applies the shared training protocol and writes a predictable
+set of artifacts that the notebook, replication audit, and report can reuse.
+"""
 
 from __future__ import annotations
 
@@ -17,7 +22,14 @@ from .training import fit, save_result
 
 @dataclass(frozen=True, slots=True)
 class Experiment:
-    """One row in the fixed experiment matrix."""
+    """Describe one controlled model comparison.
+
+    Attributes:
+        name: Stable identifier used in checkpoint and result filenames.
+        model_name: Architecture identifier accepted by :func:`build_model`.
+        mode: Transfer-learning freeze policy.
+        augment: Whether the training loader receives mild random augmentation.
+    """
 
     name: str
     model_name: str
@@ -48,7 +60,28 @@ def run_experiment(
     device: torch.device,
     pretrained: bool = True,
 ) -> tuple[nn.Module, dict]:
-    """Train/evaluate one experiment and write its standard artifacts."""
+    """Train one experiment, evaluate its selected state, and write artifacts.
+
+    Args:
+        experiment: Architecture, freeze policy, and augmentation choice to run.
+        train_frame: Fixed training metadata.
+        val_frame: Fixed validation metadata used for early stopping and selection.
+        test_frame: Fixed official-test metadata used only after fitting.
+        config: Shared paths, hyperparameters, seed, and probability threshold.
+        device: Device used for training and inference.
+        pretrained: Load torchvision ``DEFAULT`` ImageNet weights when true.
+
+    Returns:
+        The validation-selected model and its flat result dictionary. Result keys
+        include experiment metadata, best epoch, validation and test metrics,
+        trainable parameter count, and elapsed training minutes.
+
+    Note:
+        This function writes the best checkpoint, epoch history, validation and test
+        predictions, source/style summaries, and result JSON below
+        ``config.output_dir``. It does not choose among E0--E4; the outer workflow
+        ranks completed experiments by validation F1.
+    """
     # 1) Build loaders.  Only the training loader receives augmentation.
     train_loader, val_loader, test_loader = build_loaders(
         train_frame,
@@ -146,7 +179,22 @@ def load_experiment_checkpoint(
     config: ProjectConfig,
     device: torch.device,
 ) -> nn.Module:
-    """Reconstruct an experiment model from its saved best checkpoint."""
+    """Reconstruct a model and restore its saved best-validation weights.
+
+    Args:
+        experiment: Definition needed to rebuild the original architecture and freeze
+            policy.
+        config: Configuration whose output directory contains the checkpoint.
+        device: Destination device and checkpoint map location.
+
+    Returns:
+        An evaluation-mode model loaded from ``<experiment.name>_best.pt``. The model
+        is created without downloading pretrained weights because the checkpoint
+        already contains every parameter.
+
+    Raises:
+        FileNotFoundError: If the expected best checkpoint does not exist.
+    """
     checkpoint_path = (
         config.output_dir / "models" / f"{experiment.name}_best.pt"
     )

@@ -1,3 +1,9 @@
+"""Exercise model construction, metrics, robustness transforms, and Grad-CAM.
+
+All models use random weights and small CPU tensors, keeping these checks independent
+of pretrained downloads and the full artwork dataset.
+"""
+
 import numpy as np
 import pandas as pd
 import pytest

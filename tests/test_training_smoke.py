@@ -1,3 +1,5 @@
+"""Run a one-epoch synthetic check across training, persistence, and reloading."""
+
 from pathlib import Path
 
 import numpy as np
@@ -14,6 +16,16 @@ from ai_art_detection.experiments import (
 
 
 def make_frame(root: Path, split: str, count: int = 4) -> pd.DataFrame:
+    """Create a tiny balanced image split for the end-to-end smoke test.
+
+    Args:
+        root: Temporary directory below which images are written.
+        split: Split folder name and source of the official-split field.
+        count: Number of alternating human and generated examples.
+
+    Returns:
+        Canonical image metadata accepted by the experiment runner.
+    """
     rows = []
     for index in range(count):
         label = index % 2

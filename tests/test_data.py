@@ -1,3 +1,9 @@
+"""Verify metadata inference, split isolation, transforms, and image loading.
+
+The tests use small synthetic tables and temporary images so the dataset layer can be
+checked without downloading AI-ArtBench.
+"""
+
 from pathlib import Path
 
 import numpy as np

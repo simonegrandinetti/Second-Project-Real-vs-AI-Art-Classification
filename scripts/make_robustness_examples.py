@@ -24,6 +24,12 @@ from ai_art_detection.evaluation import (
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse source-image selection and panel output settings.
+
+    Returns:
+        Parsed command-line namespace. An explicit image path takes precedence over
+        selection from the saved test split.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--split-csv",
@@ -51,7 +57,20 @@ def parse_args() -> argparse.Namespace:
 
 
 def select_source_image(split_csv: Path, source_label: str) -> tuple[Path, str]:
-    """Choose the first existing image for the requested source label."""
+    """Choose a reproducible existing image from a saved split.
+
+    Args:
+        split_csv: Metadata CSV containing at least an ``image_path`` column.
+        source_label: Preferred source when that optional column is available.
+
+    Returns:
+        The first existing candidate path and a short source/style caption. If the
+        requested source has no rows, selection falls back to the complete split.
+
+    Raises:
+        ValueError: If ``image_path`` is missing from the CSV.
+        FileNotFoundError: If none of the candidate paths exists locally.
+    """
     frame = pd.read_csv(split_csv)
     if "image_path" not in frame.columns:
         raise ValueError(f"{split_csv} must contain an image_path column.")
@@ -76,12 +95,29 @@ def select_source_image(split_csv: Path, source_label: str) -> tuple[Path, str]:
 
 
 def resize_to_model_input(image: Image.Image, image_size: int) -> Image.Image:
-    """Resize with the bicubic interpolation used for the visual panel."""
+    """Resize one displayed example to the model's square input geometry.
+
+    Args:
+        image: Clean or perturbed Pillow image.
+        image_size: Desired width and height.
+
+    Returns:
+        A bicubically resized Pillow image. Normalization is omitted because this
+        function prepares a human-viewable figure rather than a model tensor.
+    """
     return image.resize((image_size, image_size), Image.Resampling.BICUBIC)
 
 
 def build_panels(image: Image.Image, image_size: int) -> list[tuple[str, Image.Image]]:
-    """Return clean and perturbed versions of the same source image."""
+    """Render every registered robustness condition on one source image.
+
+    Args:
+        image: Shared Pillow source image.
+        image_size: Square display size applied after each perturbation.
+
+    Returns:
+        ``(label, image)`` pairs in the same order as ``ROBUSTNESS_CONDITIONS``.
+    """
     panels = []
     for condition in ROBUSTNESS_CONDITIONS:
         perturbed = apply_robustness_perturbation(
@@ -101,7 +137,17 @@ def save_panel(
     caption: str,
     output_path: Path,
 ) -> None:
-    """Save a compact comparison panel for the report."""
+    """Save robustness examples in a compact five-column figure.
+
+    Args:
+        panels: Ordered display labels and rendered Pillow images.
+        caption: Shared source caption placed beneath the grid.
+        output_path: Destination image path. Missing parents are created.
+
+    Note:
+        Unused cells in the final row remain blank, and the Matplotlib figure is
+        closed after saving.
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
     columns = 5
     rows = math.ceil(len(panels) / columns)
@@ -127,6 +173,11 @@ def save_panel(
 
 
 def main() -> None:
+    """Select one artwork and write its complete robustness comparison panel.
+
+    This command creates only a report figure. It does not evaluate a checkpoint,
+    recompute metrics, or modify experiment outputs.
+    """
     args = parse_args()
     if args.image_path is not None:
         source_path = args.image_path

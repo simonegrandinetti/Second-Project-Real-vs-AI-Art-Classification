@@ -1,3 +1,5 @@
+"""Verify that measured CSV outputs produce report tables, macros, and figures."""
+
 import shutil
 import subprocess
 import sys

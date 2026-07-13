@@ -51,6 +51,12 @@ from ai_art_detection.gradcam import save_gradcam_panels
 
 
 def parse_args() -> argparse.Namespace:
+    """Parse dataset, runtime, experiment-selection, and resume options.
+
+    Returns:
+        Parsed command-line namespace. The dataset root is intentionally required;
+        all other values default to the fixed coursework protocol.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--data-root", type=Path, required=True)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs"))
@@ -84,6 +90,19 @@ def save_manifest(
     scanned: pd.DataFrame,
     splits: tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame],
 ) -> None:
+    """Record the run configuration, environment, inventory, and split counts.
+
+    Args:
+        output_path: JSON manifest destination. Its parent must already exist.
+        config: Effective experiment configuration.
+        device: Selected training device.
+        scanned: Complete validated metadata table.
+        splits: Train, validation, and test DataFrames in that order.
+
+    Note:
+        The manifest records counts and environment details, not credentials or image
+        contents. The command line is retained to make the run reproducible.
+    """
     split_counts = {}
     for name, frame in zip(("train", "val", "test"), splits):
         split_counts[name] = {
@@ -124,6 +143,19 @@ def save_manifest(
 
 
 def main() -> None:
+    """Run or resume E0--E4 and generate the complete measured artifact set.
+
+    The command validates the pinned dataset, persists deterministic split paths,
+    trains or reuses requested experiments, ranks them exclusively by validation F1,
+    and runs robustness and Grad-CAM for the selected model. ``--resume`` reuses an
+    experiment only when its result JSON, test predictions, and checkpoint all exist;
+    shared diagnostics are then regenerated from those artifacts.
+
+    Raises:
+        FileNotFoundError: If the dataset or a supposedly reusable artifact is absent.
+        ValueError: If dataset validation, split construction, or saved prediction
+            assumptions fail.
+    """
     # 1) Collect run settings and make every output folder up front.
     args = parse_args()
     config = ProjectConfig(

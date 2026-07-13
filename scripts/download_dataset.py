@@ -27,6 +27,18 @@ MINIMUM_FREE_BYTES = 25 * 1024**3
 
 
 def main() -> None:
+    """Download AI-ArtBench version 5 and validate the extracted inventory.
+
+    The command creates the destination directory, checks that its filesystem has at
+    least 25 GiB free, asks kagglehub for the pinned dataset version, then scans every
+    image and verifies both official counts and Pillow readability. Existing content
+    is redownloaded only when ``--force`` is supplied.
+
+    Raises:
+        RuntimeError: If the destination filesystem does not have enough free space.
+        ValueError: If downloaded metadata, counts, or image readability fail project
+            validation.
+    """
     # 1) Read the command line choices.  The default matches the README and
     # notebook, so most users can simply run `python scripts/download_dataset.py`.
     parser = argparse.ArgumentParser(

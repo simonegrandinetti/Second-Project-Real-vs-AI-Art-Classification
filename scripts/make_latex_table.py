@@ -26,6 +26,13 @@ def write_table(
     *,
     column_format: str,
 ) -> None:
+    """Write a DataFrame as a consistently formatted LaTeX table.
+
+    Args:
+        frame: Display-ready rows and column headings.
+        output_path: Destination ``.tex`` fragment. Its parent must already exist.
+        column_format: LaTeX alignment string passed to ``DataFrame.to_latex``.
+    """
     output_path.write_text(
         frame.to_latex(
             index=False,
@@ -38,6 +45,15 @@ def write_table(
 
 
 def latex_escape(value: str) -> str:
+    """Escape special LaTeX characters in text inserted into report macros.
+
+    Args:
+        value: Untrusted label from a measured CSV or experiment identifier.
+
+    Returns:
+        Text safe to place inside a LaTeX command argument for the characters used by
+        this project's generated labels.
+    """
     return (
         value.replace("\\", r"\textbackslash{}")
         .replace("_", r"\_")
@@ -48,6 +64,18 @@ def latex_escape(value: str) -> str:
 
 
 def main() -> None:
+    """Generate report tables, measured-value macros, and selected figure copies.
+
+    The validation-ranked experiment CSV determines which model supplies robustness,
+    subgroup, and diagnostic artifacts. Numerical prose values are written as LaTeX
+    macros so the report cannot silently diverge from the measured CSV files. The
+    replication table is included only when its independent audit output exists.
+
+    Raises:
+        FileNotFoundError: If a required primary result table is absent.
+        KeyError: If measured tables do not contain the expected experiment or metric
+            columns.
+    """
     # 1) Read the locations of measured outputs and report fragments.
     parser = argparse.ArgumentParser(
         description="Generate all LaTeX fragments from measured experiment outputs."
@@ -202,6 +230,7 @@ def main() -> None:
     by_name = results.set_index("exp_name")
 
     def f1_delta(new: str, baseline: str) -> float:
+        """Return the signed test-F1 difference between two named experiments."""
         return float(by_name.loc[new, "test_f1"] - by_name.loc[baseline, "test_f1"])
 
     clean_f1 = float(

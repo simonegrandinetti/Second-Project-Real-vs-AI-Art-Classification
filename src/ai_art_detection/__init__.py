@@ -1,4 +1,11 @@
-"""Tools for binary detection of AI-generated artwork."""
+"""Reusable building blocks for the AI-art detection experiments.
+
+The package exposes the small public surface used by the command-line scripts
+and notebook: experiment configuration, deterministic dataset preparation,
+PyTorch loaders, and transfer-learning model builders. More specialized
+evaluation, replication, training, and Grad-CAM utilities remain available
+from their respective modules.
+"""
 
 # Re-export the small public surface used by notebooks, scripts, and tests.
 from .config import ProjectConfig

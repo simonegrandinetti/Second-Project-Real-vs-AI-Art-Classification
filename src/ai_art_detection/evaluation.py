@@ -1,4 +1,11 @@
-"""Evaluation metrics, diagnostic plots, and robustness transforms."""
+"""Evaluate binary classifiers and probe their behavior after training.
+
+Models in this project emit one logit: positive values support the AI-generated
+class and negative values support the human class. This module converts those
+scores into probabilities and metrics, retains image-level predictions for
+subgroup analysis, creates diagnostic plots, and defines the shared robustness
+conditions used by experiments and the report.
+"""
 
 from __future__ import annotations
 
@@ -30,7 +37,13 @@ from .data import ArtBinaryDataset, IMAGENET_MEAN, IMAGENET_STD
 
 @dataclass(frozen=True)
 class RobustnessCondition:
-    """One post-training perturbation used to probe model stability."""
+    """Describe one deterministic post-training stability check.
+
+    Attributes:
+        kind: Perturbation family understood by :func:`robustness_perturbation`.
+        value: Family-specific setting, such as a contrast factor, JPEG quality,
+            noise standard deviation, or intermediate resampling size.
+    """
 
     kind: str
     value: float
@@ -58,7 +71,15 @@ ROBUSTNESS_CONDITIONS: tuple[RobustnessCondition, ...] = (
 
 
 def robustness_condition_label(condition: str) -> str:
-    """Return the report/table label for one robustness condition."""
+    """Convert a robustness identifier into a readable family name.
+
+    Args:
+        condition: Internal condition identifier such as ``"jpeg"`` or ``"noise"``.
+
+    Returns:
+        The preferred report label. Unknown identifiers fall back to title case so
+        exploratory conditions can still be displayed.
+    """
     labels = {
         "clean": "Clean",
         "contrast": "Contrast",
@@ -73,7 +94,16 @@ def robustness_condition_label(condition: str) -> str:
 
 
 def robustness_value_label(condition: str, value: float) -> str:
-    """Return the report/table value label for one robustness setting."""
+    """Format a robustness value with units meaningful for its family.
+
+    Args:
+        condition: Internal perturbation-family identifier.
+        value: Numeric setting associated with the condition.
+
+    Returns:
+        A compact label such as ``"0.5x"``, ``"Q20"``, or ``"64 px"``. Unknown
+        conditions use the general numeric representation.
+    """
     if condition == "clean":
         return "--"
     if condition in {"contrast", "brightness", "saturation"}:
@@ -90,7 +120,16 @@ def robustness_value_label(condition: str, value: float) -> str:
 
 
 def robustness_plot_label(condition: str, value: float) -> str:
-    """Return a compact x-axis label for robustness plots."""
+    """Combine a perturbation family and setting for plot axes.
+
+    Args:
+        condition: Internal perturbation-family identifier.
+        value: Numeric setting associated with the condition.
+
+    Returns:
+        ``"clean"`` for the unmodified baseline, otherwise a family label followed
+        by its formatted value.
+    """
     value_label = robustness_value_label(condition, value)
     if condition == "clean":
         return "clean"
@@ -98,7 +137,15 @@ def robustness_plot_label(condition: str, value: float) -> str:
 
 
 def sigmoid(logits: np.ndarray) -> np.ndarray:
-    """Stable sigmoid for model logits stored in NumPy/Pandas objects."""
+    """Convert binary logits to fake-class probabilities without overflow.
+
+    Args:
+        logits: Scalar or array-like one-logit model outputs.
+
+    Returns:
+        A floating NumPy array of the same shape with values in ``[0, 1]``. Inputs
+        are clipped to ``[-50, 50]`` before exponentiation for numerical stability.
+    """
     logits = np.clip(np.asarray(logits, dtype=float), -50, 50)
     return 1 / (1 + np.exp(-logits))
 
@@ -108,7 +155,19 @@ def binary_metrics(
     logits: np.ndarray | list,
     threshold: float = 0.5,
 ) -> dict[str, float]:
-    """Compute thresholded binary metrics plus ROC-AUC when both classes exist."""
+    """Compute the common metrics for one-logit binary predictions.
+
+    Args:
+        labels: Ground-truth labels, where ``0`` is human and ``1`` is AI-generated.
+        logits: One model logit for each label.
+        threshold: Fake-class probability at or above which a row is predicted as
+            AI-generated.
+
+    Returns:
+        Accuracy, positive-class precision, recall, F1, and ROC-AUC. ROC-AUC is
+        ``NaN`` when the supplied labels contain only one class; precision, recall,
+        and F1 use zero rather than warning when no positive predictions are present.
+    """
     labels = np.asarray(labels, dtype=int)
     probabilities = sigmoid(np.asarray(logits))
     predictions = (probabilities >= threshold).astype(int)
@@ -136,7 +195,22 @@ def evaluate(
     device: torch.device,
     threshold: float = 0.5,
 ) -> tuple[dict[str, float], pd.DataFrame]:
-    """Evaluate a model and return aggregate metrics plus per-image predictions."""
+    """Evaluate a model without gradients and retain image-level predictions.
+
+    Args:
+        model: Binary classifier returning one logit per image.
+        loader: Non-empty loader whose batches contain ``image``, ``label``, ``path``,
+            ``source_label``, and ``style_label``.
+        criterion: Loss accepting flattened logits and float binary labels.
+        device: Device on which inference is performed.
+        threshold: Probability threshold used for the ``pred`` column and metrics.
+
+    Returns:
+        A pair containing the aggregate metric dictionary and a DataFrame with
+        ``image_path``, ``label``, ``logit``, ``prob_fake``, ``source_label``,
+        ``style_label``, ``pred``, and ``correct`` columns. The metric dictionary
+        also contains the sample-weighted mean loss.
+    """
     model.eval()
     loss_total = 0.0
     labels_all: list[float] = []
@@ -175,10 +249,15 @@ def evaluate(
 
 
 def metrics_by_group(predictions: pd.DataFrame, group: str) -> pd.DataFrame:
-    """Compute full binary metrics independently for each subgroup.
-    
-    predictions: DataFrame with columns ["label", "logit", group]
-    group: Column name to group by (e.g., "source_label" or "style_label")
+    """Compute binary metrics independently within each subgroup.
+
+    Args:
+        predictions: Image-level table containing ``label`` and ``logit`` columns.
+        group: Column whose distinct values define the subgroups.
+
+    Returns:
+        One row per subgroup with its name, sample count, and binary metrics. The
+        standard fixed probability threshold of ``0.5`` is used.
     """
     rows = []
     for name, part in predictions.groupby(group, dropna=False):
@@ -188,12 +267,37 @@ def metrics_by_group(predictions: pd.DataFrame, group: str) -> pd.DataFrame:
 
 
 def style_metrics(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Return full binary metrics for each style, which contains both classes."""
+    """Summarize binary performance within each artistic style.
+
+    Args:
+        predictions: Image-level predictions containing ``style_label``, ``label``,
+            and ``logit`` columns.
+
+    Returns:
+        Full binary metrics by style. The fixed sampling protocol places both human
+        and AI-generated images in each style, making these metrics meaningful.
+    """
     return metrics_by_group(predictions, "style_label")
 
 
 def source_error_summary(predictions: pd.DataFrame) -> pd.DataFrame:
-    """Report class-appropriate errors for source groups containing one label."""
+    """Report the meaningful error direction for each single-class source.
+
+    Human rows can only produce false positives, while Latent Diffusion and Stable
+    Diffusion rows can only produce false negatives. Reporting those rates avoids
+    misleading precision, recall, or ROC-AUC values for one-class groups.
+
+    Args:
+        predictions: Image-level table containing ``source_label``, ``label``, and
+            thresholded ``pred`` columns.
+
+    Returns:
+        Source, count, accuracy, applicable error type, and error rate, sorted by
+        source label.
+
+    Raises:
+        ValueError: If any source group contains more than one binary label.
+    """
     rows = []
     for source, part in predictions.groupby("source_label", dropna=False):
         labels = set(part["label"].astype(int))
@@ -220,7 +324,17 @@ def source_error_summary(predictions: pd.DataFrame) -> pd.DataFrame:
 def plot_confusion(
     predictions: pd.DataFrame, output_path: Path, title: str = "Test confusion matrix"
 ) -> None:
-    """Save a two-class confusion matrix figure."""
+    """Save a labelled two-class confusion matrix.
+
+    Args:
+        predictions: Table containing integer ``label`` and ``pred`` columns.
+        output_path: Destination image path. Its parent directory must already exist.
+        title: Text shown above the matrix.
+
+    Note:
+        The Matplotlib figure is closed after writing so repeated experiment runs do
+        not retain plotting state.
+    """
     matrix = confusion_matrix(predictions["label"], predictions["pred"])
     figure, axis = plt.subplots(figsize=(5, 5))
     ConfusionMatrixDisplay(
@@ -235,7 +349,14 @@ def plot_confusion(
 def plot_roc(
     predictions: pd.DataFrame, output_path: Path, title: str = "Test ROC curve"
 ) -> None:
-    """Save a ROC curve figure from per-image fake probabilities."""
+    """Save a receiver operating characteristic curve and its area.
+
+    Args:
+        predictions: Table containing binary ``label`` and ``prob_fake`` columns with
+            both classes represented.
+        output_path: Destination image path. Its parent directory must already exist.
+        title: Text shown above the curve.
+    """
     false_positive, true_positive, _ = roc_curve(
         predictions["label"], predictions["prob_fake"]
     )
@@ -251,42 +372,64 @@ def plot_roc(
 
 
 class ContrastTransform:
-    """Pillow contrast perturbation used for robustness checks."""
+    """Scale Pillow image contrast around its mean luminance.
+
+    Attributes:
+        factor: Contrast multiplier. ``1`` preserves contrast, values below ``1``
+            flatten it, and values above ``1`` strengthen it.
+    """
 
     def __init__(self, factor: float):
         self.factor = factor
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return ``image`` with contrast scaled by the configured factor."""
         return ImageEnhance.Contrast(image).enhance(self.factor)
 
 
 class BrightnessTransform:
-    """Pillow brightness perturbation used for robustness checks."""
+    """Scale all Pillow image intensities by a fixed brightness factor.
+
+    Attributes:
+        factor: Brightness multiplier, with ``1`` representing the original image.
+    """
 
     def __init__(self, factor: float):
         self.factor = factor
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return ``image`` with brightness scaled by the configured factor."""
         return ImageEnhance.Brightness(image).enhance(self.factor)
 
 
 class SaturationTransform:
-    """Pillow colour-saturation perturbation used for robustness checks."""
+    """Scale Pillow colour saturation while retaining image geometry.
+
+    Attributes:
+        factor: Colour multiplier. ``0`` produces greyscale and ``1`` preserves the
+            original saturation.
+    """
 
     def __init__(self, factor: float):
         self.factor = factor
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return ``image`` with colour scaled by the configured saturation."""
         return ImageEnhance.Color(image).enhance(self.factor)
 
 
 class GaussianBlurTransform:
-    """Apply Gaussian blur with a fixed pixel radius."""
+    """Suppress fine spatial detail using Gaussian blur.
+
+    Attributes:
+        radius: Pillow Gaussian-blur radius measured in input-image pixels.
+    """
 
     def __init__(self, radius: float):
         self.radius = radius
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return a Gaussian-blurred copy of ``image``."""
         return image.filter(ImageFilter.GaussianBlur(radius=self.radius))
 
 
@@ -295,12 +438,16 @@ class DeterministicGaussianNoiseTransform:
 
     The seed is derived from the image bytes, so the same image receives the
     same perturbation independent of dataloader order or worker count.
+
+    Attributes:
+        sigma: Noise standard deviation on RGB intensities scaled to ``[0, 1]``.
     """
 
     def __init__(self, sigma: float):
         self.sigma = sigma
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return an RGB copy with deterministic Gaussian noise added."""
         rgb = image.convert("RGB")
         pixels = np.asarray(rgb, dtype=np.float32) / 255.0
         digest = hashlib.blake2b(rgb.tobytes(), digest_size=8).digest()
@@ -312,12 +459,18 @@ class DeterministicGaussianNoiseTransform:
 
 
 class JPEGCompressionTransform:
-    """Round-trip an image through JPEG compression at a fixed quality."""
+    """Round-trip an image through in-memory JPEG compression.
+
+    Attributes:
+        quality: Pillow JPEG quality setting. Lower values create stronger block and
+            quantization artifacts.
+    """
 
     def __init__(self, quality: int):
         self.quality = quality
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return the RGB image recovered from an in-memory JPEG round trip."""
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=self.quality)
         buffer.seek(0)
@@ -326,12 +479,21 @@ class JPEGCompressionTransform:
 
 
 class CommonResampleTransform:
-    """Apply the same low-resolution bottleneck to every source."""
+    """Downsample every source through the same bicubic resolution bottleneck.
+
+    The later shared evaluation transform resizes this intermediate image to the model
+    input size. Applying the bottleneck equally avoids mixing source-specific native
+    resolutions with the robustness comparison.
+
+    Attributes:
+        intermediate_size: Square width and height produced by this transform.
+    """
 
     def __init__(self, intermediate_size: int):
         self.intermediate_size = intermediate_size
 
     def __call__(self, image: Image.Image) -> Image.Image:
+        """Return a bicubically downsampled square copy of ``image``."""
         return image.resize(
             (self.intermediate_size, self.intermediate_size),
             Image.Resampling.BICUBIC,
@@ -339,7 +501,20 @@ class CommonResampleTransform:
 
 
 def robustness_perturbation(kind: str, value: float):
-    """Build only the PIL-space perturbation for a robustness condition."""
+    """Construct the image-space part of a robustness condition.
+
+    Args:
+        kind: One of ``clean``, ``contrast``, ``brightness``, ``saturation``,
+            ``blur``, ``noise``, ``jpeg``, or ``resample``.
+        value: Family-specific perturbation setting.
+
+    Returns:
+        A callable Pillow transform, or ``None`` for the clean condition. Resizing to
+        model input size and ImageNet normalization are intentionally not included.
+
+    Raises:
+        ValueError: If ``kind`` is not a registered perturbation family.
+    """
     if kind == "clean":
         return None
     if kind == "contrast":
@@ -362,7 +537,19 @@ def robustness_perturbation(kind: str, value: float):
 def apply_robustness_perturbation(
     image: Image.Image, kind: str, value: float
 ) -> Image.Image:
-    """Apply a PIL-space robustness perturbation to one image."""
+    """Apply one registered perturbation to a Pillow image.
+
+    Args:
+        image: Source image before model resizing or normalization.
+        kind: Registered perturbation family.
+        value: Family-specific perturbation setting.
+
+    Returns:
+        The perturbed Pillow image. The clean condition returns the original object.
+
+    Raises:
+        ValueError: If ``kind`` is not recognized.
+    """
     perturbation = robustness_perturbation(kind, value)
     if perturbation is None:
         return image
@@ -370,7 +557,20 @@ def apply_robustness_perturbation(
 
 
 def robustness_transform(kind: str, value: float, image_size: int):
-    """Build the evaluation transform for one robustness condition."""
+    """Compose a perturbation with the shared model preprocessing.
+
+    Args:
+        kind: Registered perturbation family.
+        value: Family-specific perturbation setting.
+        image_size: Final square tensor size expected by the classifier.
+
+    Returns:
+        A torchvision composition that perturbs first, directly resizes to the model
+        input, converts to a tensor, and applies ImageNet normalization.
+
+    Raises:
+        ValueError: If ``kind`` is not recognized.
+    """
     perturbation = robustness_perturbation(kind, value)
     perturbations = [] if perturbation is None else [perturbation]
     return transforms.Compose(
@@ -393,7 +593,27 @@ def evaluate_robustness(
     num_workers: int = 0,
     threshold: float = 0.5,
 ) -> pd.DataFrame:
-    """Evaluate the fixed model under clean and perturbed test transforms."""
+    """Evaluate a fixed checkpoint under every registered robustness condition.
+
+    This function performs no training or model selection. Every condition uses the
+    same test rows, threshold, resize, and ImageNet normalization; only the preceding
+    deterministic image-space perturbation changes.
+
+    Args:
+        model: Already selected binary classifier.
+        test_frame: Test metadata supplied identically to every condition.
+        criterion: Binary loss used to report condition-level mean loss.
+        device: Device used for inference.
+        image_size: Final square model input size.
+        batch_size: Images evaluated per batch.
+        num_workers: Worker processes used by each condition loader.
+        threshold: Fixed fake-class probability threshold.
+
+    Returns:
+        One row per entry in :data:`ROBUSTNESS_CONDITIONS`, in registry order. Columns
+        include ``condition``, ``value``, loss, accuracy, precision, recall, F1, and
+        ROC-AUC.
+    """
     rows = []
     for condition in ROBUSTNESS_CONDITIONS:
         # The perturbation is applied before the shared resize/normalization

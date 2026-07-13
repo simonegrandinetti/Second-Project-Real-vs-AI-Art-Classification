@@ -1,4 +1,10 @@
-"""Model builders and transfer-learning freeze policies."""
+"""Build the binary classifiers and apply their transfer-learning policies.
+
+The experiment matrix uses torchvision implementations rather than local
+reimplementations of the backbones. When pretraining is enabled, the builders
+request the installed torchvision release's ``DEFAULT`` ImageNet-1K weights and
+replace the multiclass classifier with a single-logit human-versus-AI head.
+"""
 
 from __future__ import annotations
 
@@ -15,13 +21,25 @@ from torchvision.models import (
 
 
 def set_trainable(module: nn.Module, trainable: bool) -> None:
-    """Enable or disable gradients for every parameter in a module."""
+    """Set one gradient policy recursively across a module.
+
+    Args:
+        module: PyTorch module whose parameters should be updated.
+        trainable: Desired value of ``requires_grad`` for every parameter.
+    """
     for parameter in module.parameters():
         parameter.requires_grad = trainable
 
 
 def count_trainable_parameters(model: nn.Module) -> int:
-    """Count parameters that will receive optimizer updates."""
+    """Count scalar parameters currently eligible for optimization.
+
+    Args:
+        model: Model whose ``requires_grad`` flags have already been configured.
+
+    Returns:
+        Sum of ``numel()`` over trainable parameters only.
+    """
     return sum(
         parameter.numel()
         for parameter in model.parameters()
@@ -34,6 +52,11 @@ class ConvNeXtTinySEBinary(nn.Module):
 
     This is a small insertion experiment on top of ConvNeXt-Tiny, not the
     paper's full multi-level AttentionConvNeXt model.
+
+    A global average first summarizes each final ConvNeXt channel. The two-layer
+    squeeze-and-excitation (SE) gate turns that summary into per-image channel
+    weights, which rescale the final spatial feature map before the binary head.
+    The gate changes channel emphasis but does not provide spatial attention.
     """
 
     def __init__(
@@ -43,6 +66,15 @@ class ConvNeXtTinySEBinary(nn.Module):
         reduction: int = 16,
         dropout: float = 0.2,
     ):
+        """Initialize the ConvNeXt-Tiny backbone, SE gate, and binary head.
+
+        Args:
+            pretrained: Load ``ConvNeXt_Tiny_Weights.DEFAULT`` from torchvision when
+                true; otherwise initialize the backbone randomly.
+            mode: Initial freeze policy: ``frozen``, ``last_stage``, or ``full``.
+            reduction: Channel reduction ratio inside the SE bottleneck.
+            dropout: Probability used by the classifier's dropout layer.
+        """
         super().__init__()
         weights = ConvNeXt_Tiny_Weights.DEFAULT if pretrained else None
         base = convnext_tiny(weights=weights)
@@ -68,7 +100,16 @@ class ConvNeXtTinySEBinary(nn.Module):
         self.configure_training(mode)
 
     def configure_training(self, mode: str) -> None:
-        """Apply the same freeze policy used by the standard backbones."""
+        """Apply the experiment's transfer-learning freeze policy.
+
+        Args:
+            mode: ``frozen`` trains only SE and classifier parameters;
+                ``last_stage`` additionally trains final feature stage ``features[7]``;
+                ``full`` trains the complete network.
+
+        Raises:
+            ValueError: If ``mode`` is not one of the supported policies.
+        """
         set_trainable(self, False)
         if mode == "frozen":
             set_trainable(self.se, True)
@@ -83,6 +124,15 @@ class ConvNeXtTinySEBinary(nn.Module):
             raise ValueError(f"Unknown training mode: {mode}")
 
     def forward(self, images: torch.Tensor) -> torch.Tensor:
+        """Return one fake-class logit for every input image.
+
+        Args:
+            images: ImageNet-normalized tensor with shape ``(N, 3, H, W)``.
+
+        Returns:
+            Logit tensor with shape ``(N, 1)``. Positive values favor the
+            AI-generated class and negative values favor the human class.
+        """
         features = self.features(images)
         channel_weights = self.se(self.pool(features).flatten(1))[:, :, None, None]
         return self.classifier(self.pool(features * channel_weights))
@@ -93,7 +143,24 @@ def build_model(
     mode: str = "frozen",
     pretrained: bool = True,
 ) -> nn.Module:
-    """Build a binary classifier and apply the requested training mode."""
+    """Build a supported one-logit classifier and configure trainable layers.
+
+    Args:
+        model_name: ``mobilenet_v2``, ``convnext_tiny``, ``convnext_tiny_se``, or
+            the ``resnet18`` compatibility model used by smoke tests.
+        mode: Transfer-learning policy. ``frozen`` trains the new head,
+            ``last_stage`` also trains the final backbone stage, and ``full`` trains
+            all parameters. The SE model also trains its newly inserted gate.
+        pretrained: Request torchvision's model-specific ``DEFAULT`` ImageNet-1K
+            weights. False avoids downloads and is intended for tests or diagnostics.
+
+    Returns:
+        A PyTorch model whose forward pass produces shape ``(N, 1)`` and whose
+        ``requires_grad`` flags reflect ``mode``.
+
+    Raises:
+        ValueError: If the model name or training mode is unknown.
+    """
     if mode not in {"frozen", "last_stage", "full"}:
         raise ValueError(f"Unknown training mode: {mode}")
 
@@ -139,7 +206,20 @@ def build_model(
 
 
 def gradcam_target_layer(model: nn.Module, model_name: str) -> nn.Module:
-    """Return the last spatial feature block used for Grad-CAM."""
+    """Select the final spatial feature block suitable for Grad-CAM hooks.
+
+    Args:
+        model: Model produced by :func:`build_model`.
+        model_name: Architecture identifier used to locate its final spatial block.
+
+    Returns:
+        The ConvNeXt final feature stage, MobileNetV2 final feature layer, or ResNet18
+        final residual block. Its output still has spatial dimensions, unlike the
+        classifier head.
+
+    Raises:
+        ValueError: If no target-layer mapping exists for ``model_name``.
+    """
     if model_name.startswith("convnext"):
         return model.features[7]  # type: ignore[attr-defined]
     if model_name == "mobilenet_v2":

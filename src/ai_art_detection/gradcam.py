@@ -1,4 +1,10 @@
-"""Grad-CAM utilities for qualitative model inspection."""
+"""Localize image regions that influence a selected binary prediction.
+
+Gradient-weighted Class Activation Mapping (Grad-CAM) combines the activations
+of a final spatial feature block using channel weights derived from score
+gradients. The resulting heatmap shows model sensitivity, not a causal
+explanation or proof that the highlighted content is semantically meaningful.
+"""
 
 from __future__ import annotations
 
@@ -17,9 +23,19 @@ from .models import gradcam_target_layer
 
 
 class GradCAM:
-    """Small context-managed Grad-CAM engine for a selected target layer."""
+    """Capture activations and gradients from one spatial feature layer.
+
+    The engine registers PyTorch hooks during construction. Use it as a context
+    manager, or call :meth:`close`, to guarantee those hooks are removed before a
+    notebook creates another engine for the same model.
+
+    Args:
+        model: One-logit binary classifier to inspect.
+        target_layer: Final spatial module selected for activation and gradient hooks.
+    """
 
     def __init__(self, model: nn.Module, target_layer: nn.Module):
+        """Register hooks and initialize empty activation buffers."""
         self.model = model
         self.activations: torch.Tensor | None = None
         self.gradients: torch.Tensor | None = None
@@ -32,13 +48,15 @@ class GradCAM:
         )
 
     def _forward_hook(self, _module, _inputs, output) -> None:
+        """Retain the target layer's latest forward activation tensor."""
         self.activations = output
 
     def _backward_hook(self, _module, _grad_input, grad_output) -> None:
+        """Retain gradients of the selected score with respect to activations."""
         self.gradients = grad_output[0]
 
     def close(self) -> None:
-        """Remove registered hooks."""
+        """Remove the forward and backward hooks from the target layer."""
         self.forward_handle.remove()
         self.backward_handle.remove()
 
@@ -54,7 +72,22 @@ class GradCAM:
         target_class: int,
         device: torch.device,
     ) -> tuple[np.ndarray, float]:
-        """Return a normalized CAM and fake probability for one image tensor."""
+        """Compute Grad-CAM for one image and one predicted class.
+
+        Args:
+            image: ImageNet-normalized tensor with shape ``(3, H, W)``.
+            target_class: Class whose supporting evidence is visualized. ``1`` uses
+                the fake logit; ``0`` uses its negative as the real-class score.
+            device: Device holding the inspected model.
+
+        Returns:
+            A normalized ``(H, W)`` NumPy heatmap and the scalar fake-class
+            probability. ReLU retains positive evidence for the requested class.
+
+        Raises:
+            RuntimeError: If the selected layer did not produce hooked activations or
+                gradients during the forward/backward pass.
+        """
         self.model.eval()
         self.model.zero_grad(set_to_none=True)
         # Input gradients keep hooks active even when the backbone is frozen.
@@ -96,7 +129,28 @@ def save_gradcam_panels(
     seed: int = 42,
     examples_per_group: int = 4,
 ) -> list[Path]:
-    """Save representative correct-real, correct-fake, and error panels."""
+    """Create qualitative Grad-CAM panels for successes and mistakes.
+
+    Args:
+        model: Validation-selected binary classifier.
+        model_name: Architecture identifier used to select the target feature layer.
+        predictions: Image-level table containing paths, labels, predictions, and a
+            ``correct`` indicator.
+        output_dir: Directory in which PNG panels are written.
+        device: Device holding the model.
+        image_size: Square display and transform size.
+        seed: Sampling seed used independently for each example group.
+        examples_per_group: Maximum images shown for each available group.
+
+    Returns:
+        Paths written for non-empty groups among correct human, correct AI-generated,
+        and misclassified examples. Each panel places the resized source image beside
+        its heatmap overlay.
+
+    Note:
+        Examples are sampled for inspection only. They do not influence model
+        selection, thresholds, or reported quantitative metrics.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
     _, transform = get_transforms(image_size, augment=False)
     target_layer = gradcam_target_layer(model, model_name)

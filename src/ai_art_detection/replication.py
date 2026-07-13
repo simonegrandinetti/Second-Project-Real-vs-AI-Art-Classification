@@ -1,4 +1,10 @@
-"""Bootstrap utilities for the independent replication audit."""
+"""Quantify uncertainty in the independent holdout overfitting audit.
+
+Bootstrap resampling happens separately within each source/style group so a
+replicate cannot change the deliberately balanced test composition. The module
+also hashes split membership, making it possible to verify that an audit used
+the intended image paths without storing those paths in a manifest.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +20,15 @@ BOOTSTRAP_STRATA = ("source_label", "style_label")
 
 
 def split_path_hash(frame: pd.DataFrame) -> str:
-    """Hash sorted image paths so split membership can be audited."""
+    """Create an order-independent fingerprint of split membership.
+
+    Args:
+        frame: Split table containing an ``image_path`` column.
+
+    Returns:
+        Lowercase SHA-256 hexadecimal digest of the sorted paths joined by newlines.
+        Row order does not affect the digest, but any path change does.
+    """
     payload = "\n".join(sorted(frame["image_path"].astype(str))).encode("utf-8")
     return hashlib.sha256(payload).hexdigest()
 
@@ -28,7 +42,25 @@ def stratified_bootstrap_scores(
     threshold: float = 0.5,
     strata: Sequence[str] = BOOTSTRAP_STRATA,
 ) -> np.ndarray:
-    """Bootstrap a binary metric while preserving source/style composition."""
+    """Generate bootstrap metric scores within fixed metadata strata.
+
+    Args:
+        predictions: Image-level table containing ``label``, ``logit``, and every
+            column named by ``strata``.
+        metric: Key returned by :func:`binary_metrics`, normally ``"f1"``.
+        n_resamples: Number of bootstrap replicates.
+        seed: NumPy generator seed.
+        threshold: Fixed fake-class probability threshold.
+        strata: Columns defining groups sampled independently with replacement.
+
+    Returns:
+        A one-dimensional array of length ``n_resamples`` in deterministic generator
+        order. Each replicate preserves the original size of every stratum.
+
+    Raises:
+        ValueError: If the resample count is non-positive, required columns are
+            missing, predictions are empty, or the requested metric is unsupported.
+    """
     if n_resamples <= 0:
         raise ValueError("n_resamples must be positive.")
 
@@ -68,7 +100,18 @@ def percentile_interval(
     *,
     confidence: float = 0.95,
 ) -> tuple[float, float]:
-    """Return a central percentile confidence interval."""
+    """Calculate a central percentile interval from bootstrap values.
+
+    Args:
+        values: Bootstrap statistic values.
+        confidence: Desired central coverage strictly between zero and one.
+
+    Returns:
+        ``(lower, upper)`` empirical quantiles enclosing the requested coverage.
+
+    Raises:
+        ValueError: If ``confidence`` is not strictly between zero and one.
+    """
     if not 0 < confidence < 1:
         raise ValueError("confidence must be between 0 and 1.")
     alpha = (1 - confidence) / 2
@@ -85,7 +128,21 @@ def f1_audit_intervals(
     seed: int = 4242,
     threshold: float = 0.5,
 ) -> dict[str, float]:
-    """Return replication F1 and independent-bootstrap gap intervals."""
+    """Estimate replication F1 and the two audit gaps with bootstrap intervals.
+
+    Args:
+        train_predictions: Clean predictions for the fixed training split.
+        original_predictions: Previously reported official-test predictions.
+        replication_predictions: Predictions for the independent second holdout.
+        n_resamples: Bootstrap replicates generated for each split.
+        seed: Base seed; fixed offsets give the three splits independent draws.
+        threshold: Shared fake-class probability threshold.
+
+    Returns:
+        Bounds for replication F1, ``train F1 - replication F1``, and
+        ``replication F1 - original-test F1``. Gap replicates subtract independently
+        bootstrapped score arrays because the three image sets are disjoint.
+    """
     # The three score arrays use different seeds because the train, original
     # test, and replication sets are separate samples.
     train_scores = stratified_bootstrap_scores(
